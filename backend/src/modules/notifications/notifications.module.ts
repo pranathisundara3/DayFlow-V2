@@ -1,0 +1,14 @@
+import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { InjectModel, MongooseModule } from '@nestjs/mongoose';
+import { IsBoolean, IsOptional, IsString, MaxLength, Matches } from 'class-validator';
+import { Model, Types } from 'mongoose';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+
+@Schema({ timestamps: true, collection: 'notifications' }) export class Notification { @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true }) userId!: Types.ObjectId; @Prop({ required: true, maxlength: 150 }) title!: string; @Prop({ required: true }) date!: Date; @Prop({ required: true, maxlength: 1000 }) message!: string; @Prop({ default: false, index: true }) read!: boolean; }
+export const NotificationSchema = SchemaFactory.createForClass(Notification); NotificationSchema.index({ userId: 1, date: 1, read: 1 });
+class NotificationDto { @IsString() @MaxLength(150) title!: string; @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) date!: string; @IsString() @MaxLength(1000) message!: string; @IsOptional() @IsBoolean() read?: boolean; }
+@Injectable() class NotificationsService { constructor(@InjectModel(Notification.name) private readonly model: Model<Notification>) {} list(userId: string) { return this.model.find({ userId }).sort({ date: -1 }).lean().exec(); } create(userId: string, dto: NotificationDto) { return this.model.create({ ...dto, userId, date: new Date(`${dto.date}T00:00:00.000Z`) }); } update(userId: string, id: string, dto: Partial<NotificationDto>) { const data = dto.date ? { ...dto, date: new Date(`${dto.date}T00:00:00.000Z`) } : dto; return this.model.findOneAndUpdate({ _id: id, userId }, data, { new: true, runValidators: true }).exec(); } remove(userId: string, id: string) { return this.model.deleteOne({ _id: id, userId }).exec(); } }
+@Controller('notifications') @UseGuards(JwtAuthGuard) class NotificationsController { constructor(private readonly service: NotificationsService) {} @Get() list(@CurrentUser() user: { sub: string }) { return this.service.list(user.sub); } @Post() create(@CurrentUser() user: { sub: string }, @Body() dto: NotificationDto) { return this.service.create(user.sub, dto); } @Patch(':id') update(@CurrentUser() user: { sub: string }, @Param('id') id: string, @Body() dto: Partial<NotificationDto>) { return this.service.update(user.sub, id, dto); } @Delete(':id') remove(@CurrentUser() user: { sub: string }, @Param('id') id: string) { return this.service.remove(user.sub, id); } }
+@Module({ imports: [MongooseModule.forFeature([{ name: Notification.name, schema: NotificationSchema }])], controllers: [NotificationsController], providers: [NotificationsService] }) export class NotificationsModule {}

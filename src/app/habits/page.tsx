@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import type { Habit, Exercise, WorkoutDay, CyclicalWorkoutSplit, CycleConfig, ProteinIntake, LoggedFoodItem, CompletedWorkouts, ExerciseSession } from '@/types';
 import { P_HABITS } from '@/lib/placeholder-data';
@@ -30,8 +30,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api-client';
 
 
 const iconMap: Record<string, React.ElementType> = {
@@ -73,6 +72,58 @@ const initialWorkoutSplitRaw: CyclicalWorkoutSplit = {
 const initialWorkoutSplit = augmentWorkoutSplit(initialWorkoutSplitRaw);
 const initialCustomFoodItems = ["Protein Powder", "Creatine", "Oatmeal", "Eggs", "Chicken Breast", "Greek Yogurt"];
 const SPECIAL_HABIT_ICONS = ['GlassWater', 'Dumbbell', 'Beef', 'Pill'];
+
+// --- Backend data shapes ---
+// Habit as returned by the backend (Mongo `_id` instead of a client-generated `id`).
+type ApiHabit = {
+    _id: string;
+    name: string;
+    icon: string;
+    target?: number;
+    completions: Record<string, boolean | number>;
+};
+
+const mapApiHabit = (h: ApiHabit): Habit => ({
+    id: h._id,
+    name: h.name,
+    icon: h.icon,
+    target: h.target,
+    completions: h.completions || {},
+});
+
+// Strips the client-side `id` before sending to the backend: `PATCH /habits`
+// replaces the user's entire habit list on every call and its DTO doesn't
+// accept an `id`/`_id` field (extra unknown fields are rejected/erroring).
+const stripHabitForApi = (h: Habit) => ({
+    name: h.name,
+    icon: h.icon,
+    ...(h.target !== undefined ? { target: h.target } : {}),
+    completions: h.completions,
+});
+
+// All non-habit data for this page (gym plan, nutrition logs, cycle config, the
+// gym-tracking feature flag) is consolidated into a single `GymSettings.data`
+// blob on the backend. `PATCH /habits/gym` replaces that whole blob on every
+// call, so we always send the full merged object, never a partial patch.
+type GymData = {
+    settings: { gymTracking: boolean };
+    gym_protein_intakes: ProteinIntake[];
+    gym_logged_foods: LoggedFoodItem[];
+    gym_protein_target: number;
+    gym_custom_foods: string[];
+    gym_workout_split: CyclicalWorkoutSplit;
+    gym_cycle_config: CycleConfig;
+};
+
+const defaultGymData: GymData = {
+    settings: { gymTracking: true },
+    gym_protein_intakes: [],
+    gym_logged_foods: [],
+    gym_protein_target: 150,
+    gym_custom_foods: initialCustomFoodItems,
+    gym_workout_split: initialWorkoutSplit,
+    gym_cycle_config: { startDate: format(new Date(), 'yyyy-MM-dd'), startDayKey: 'Day 1' },
+};
 
 const useWorkoutDayInfo = (cyclicalWorkoutSplit: CyclicalWorkoutSplit, cycleConfig: CycleConfig) => {
     return useCallback((date: Date) => {
@@ -1282,50 +1333,104 @@ export default function HabitsPage() {
   }, [proteinIntakes, todayKey]);
 
 
-  // --- Firestore Data Sync ---
-  const saveFirestoreData = useCallback(async (collection: string, data: any) => {
-    if (!user) return;
-    await setDoc(doc(db, 'users', user.uid, 'data', collection), { items: data });
-  }, [user]);
+  // --- Backend Data Sync ---
+  // Holds the full, current gym-data blob so every save can PATCH the complete
+  // object (the backend replaces the whole blob on each call).
+  const gymDataRef = useRef<GymData>(defaultGymData);
 
   useEffect(() => {
     if (!user) {
         setIsLoading(false);
         return;
     }
+
+    let cancelled = false;
     setIsLoading(true);
 
-    const dataMappings: { [key: string]: { setter: (data: any) => void, placeholder: any } } = {
-        'settings': { setter: (data) => setGymTrackingEnabled(data.gymTracking !== false), placeholder: { gymTracking: true } },
-        'habits': { setter: setHabits, placeholder: P_HABITS },
-        'gym_protein_intakes': { setter: setProteinIntakes, placeholder: [] },
-        'gym_logged_foods': { setter: setLoggedFoodItems, placeholder: [] },
-        'gym_protein_target': { setter: setProteinTarget, placeholder: 150 },
-        'gym_custom_foods': { setter: setCustomFoodItems, placeholder: initialCustomFoodItems },
-        'gym_workout_split': { setter: (data) => setCyclicalWorkoutSplit(augmentWorkoutSplit(data || {})), placeholder: initialWorkoutSplit },
-        'gym_cycle_config': { setter: setCycleConfig, placeholder: { startDate: format(new Date(), 'yyyy-MM-dd'), startDayKey: "Day 1" } },
-    };
+    (async () => {
+        try {
+            const [habitsRes, gymRes] = await Promise.all([
+                apiFetch<ApiHabit[]>('/habits'),
+                apiFetch<{ data: Partial<GymData> }>('/habits/gym'),
+            ]);
 
-    const unsubscribes = Object.entries(dataMappings).map(([collName, { setter, placeholder }]) => {
-        const docRef = doc(db, 'users', user.uid, 'data', collName);
-        return onSnapshot(docRef, async (docSnap) => {
-            if (docSnap.exists()) {
-                setter((docSnap.data() as {items: any}).items);
-            } else {
-                await saveFirestoreData(collName, placeholder);
-                setter(placeholder);
+            if (cancelled) return;
+
+            let loadedHabits = habitsRes.map(mapApiHabit);
+            if (loadedHabits.length === 0) {
+                // First-time user: seed the default habit set (this also creates the
+                // special synced habits the Gym Tracker relies on).
+                loadedHabits = P_HABITS;
+                apiFetch<ApiHabit[]>('/habits', {
+                    method: 'PATCH',
+                    body: JSON.stringify(loadedHabits.map(stripHabitForApi)),
+                }).then((saved) => {
+                    if (!cancelled) setHabits(saved.map(mapApiHabit));
+                }).catch((err) => console.error('Failed to seed default habits', err));
             }
-        });
-    });
+            setHabits(loadedHabits);
 
-    const timer = setTimeout(() => setIsLoading(false), 800); // Give snapshots a moment
+            const rawGym = gymRes?.data || {};
+            const merged: GymData = {
+                settings: rawGym.settings ?? defaultGymData.settings,
+                gym_protein_intakes: rawGym.gym_protein_intakes ?? defaultGymData.gym_protein_intakes,
+                gym_logged_foods: rawGym.gym_logged_foods ?? defaultGymData.gym_logged_foods,
+                gym_protein_target: rawGym.gym_protein_target ?? defaultGymData.gym_protein_target,
+                gym_custom_foods: rawGym.gym_custom_foods ?? defaultGymData.gym_custom_foods,
+                gym_workout_split: rawGym.gym_workout_split ?? defaultGymData.gym_workout_split,
+                gym_cycle_config: rawGym.gym_cycle_config ?? defaultGymData.gym_cycle_config,
+            };
+
+            gymDataRef.current = merged;
+            setGymTrackingEnabled(merged.settings.gymTracking !== false);
+            setProteinIntakes(merged.gym_protein_intakes);
+            setLoggedFoodItems(merged.gym_logged_foods);
+            setProteinTarget(merged.gym_protein_target);
+            setCustomFoodItems(merged.gym_custom_foods);
+            setCyclicalWorkoutSplit(augmentWorkoutSplit(merged.gym_workout_split || {}));
+            setCycleConfig(merged.gym_cycle_config);
+
+            // Persist defaults for any keys that were missing from the stored blob
+            // (e.g. a brand new user), mirroring the old "seed on first load" behavior.
+            const isMissingAnyGymKey = (Object.keys(defaultGymData) as (keyof GymData)[]).some((key) => rawGym[key] === undefined);
+            if (isMissingAnyGymKey) {
+                apiFetch('/habits/gym', {
+                    method: 'PATCH',
+                    body: JSON.stringify({ data: merged }),
+                }).catch((err) => console.error('Failed to seed default gym data', err));
+            }
+        } catch (err) {
+            console.error('Failed to load habits data', err);
+        } finally {
+            if (!cancelled) setIsLoading(false);
+        }
+    })();
 
     return () => {
-        unsubscribes.forEach(unsub => unsub());
-        clearTimeout(timer);
+        cancelled = true;
     };
-  }, [user, saveFirestoreData]);
+  }, [user]);
 
+  // Merges a partial change into the current gym-data blob and PATCHes the
+  // full object (the endpoint replaces the entire blob on every call).
+  const persistGymData = useCallback((patch: Partial<GymData>) => {
+    gymDataRef.current = { ...gymDataRef.current, ...patch };
+    apiFetch('/habits/gym', {
+        method: 'PATCH',
+        body: JSON.stringify({ data: gymDataRef.current }),
+    }).catch((err) => console.error('Failed to save gym data', err));
+  }, []);
+
+  // --- Handlers that save to the backend ---
+  const handleHabitsUpdate = useCallback((updatedHabits: Habit[]) => {
+      setHabits(updatedHabits);
+      apiFetch<ApiHabit[]>('/habits', {
+          method: 'PATCH',
+          body: JSON.stringify(updatedHabits.map(stripHabitForApi)),
+      }).then((saved) => {
+          setHabits(saved.map(mapApiHabit));
+      }).catch((err) => console.error('Failed to save habits', err));
+  }, []);
 
   // --- Habit Syncing Logic ---
   useEffect(() => {
@@ -1365,46 +1470,39 @@ export default function HabitsPage() {
     });
 
     if (habitsChanged) {
-        setHabits(newHabits);
-        saveFirestoreData('habits', newHabits);
+        handleHabitsUpdate(newHabits);
     }
-  }, [todaysProteinIntake, proteinTarget, loggedFoodItems, customFoodItems, habits, isLoading, gymTrackingEnabled, saveFirestoreData]);
+  }, [todaysProteinIntake, proteinTarget, loggedFoodItems, customFoodItems, habits, isLoading, gymTrackingEnabled, handleHabitsUpdate]);
 
-  // --- Handlers that save to Firestore ---
-  const handleHabitsUpdate = useCallback((updatedHabits: Habit[]) => {
-      setHabits(updatedHabits);
-      saveFirestoreData('habits', updatedHabits);
-  }, [saveFirestoreData]);
-  
   const handleProteinIntakesUpdate = useCallback((updatedIntakes: ProteinIntake[]) => {
       setProteinIntakes(updatedIntakes);
-      saveFirestoreData('gym_protein_intakes', updatedIntakes);
-  }, [saveFirestoreData]);
+      persistGymData({ gym_protein_intakes: updatedIntakes });
+  }, [persistGymData]);
 
   const handleLoggedFoodItemsUpdate = useCallback((updatedItems: LoggedFoodItem[]) => {
       setLoggedFoodItems(updatedItems);
-      saveFirestoreData('gym_logged_foods', updatedItems);
-  }, [saveFirestoreData]);
+      persistGymData({ gym_logged_foods: updatedItems });
+  }, [persistGymData]);
 
   const handleProteinTargetUpdate = useCallback((newTarget: number) => {
       setProteinTarget(newTarget);
-      saveFirestoreData('gym_protein_target', newTarget);
-  }, [saveFirestoreData]);
+      persistGymData({ gym_protein_target: newTarget });
+  }, [persistGymData]);
 
   const handleCustomFoodItemsUpdate = useCallback((newItems: string[]) => {
       setCustomFoodItems(newItems);
-      saveFirestoreData('gym_custom_foods', newItems);
-  }, [saveFirestoreData]);
-  
+      persistGymData({ gym_custom_foods: newItems });
+  }, [persistGymData]);
+
   const handleWorkoutSplitUpdate = useCallback((newSplit: CyclicalWorkoutSplit) => {
     setCyclicalWorkoutSplit(newSplit);
-    saveFirestoreData('gym_workout_split', newSplit);
-  }, [saveFirestoreData]);
+    persistGymData({ gym_workout_split: newSplit });
+  }, [persistGymData]);
 
   const handleCycleConfigUpdate = useCallback((newConfig: CycleConfig) => {
     setCycleConfig(newConfig);
-    saveFirestoreData('gym_cycle_config', newConfig);
-  }, [saveFirestoreData]);
+    persistGymData({ gym_cycle_config: newConfig });
+  }, [persistGymData]);
 
   const handleToggleCompletion = (habitId: string, date: string) => {
     if (!isSameDay(parseISO(date), new Date())) return;

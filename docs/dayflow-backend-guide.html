@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DayFlow Backend Implementation Guide</title>
+<style>
+  @page { size: A4; margin: 20mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    color: #1a1a1a;
+    background: #ffffff;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    margin: 0;
+  }
+  .cover {
+    height: 260mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    page-break-after: always;
+  }
+  .cover .tag { color: #2f6f4f; font-weight: 700; letter-spacing: 2px; font-size: 12pt; margin-bottom: 18px; text-transform: uppercase; }
+  .cover h1 { font-size: 30pt; margin: 0 0 10px; color: #14342a; }
+  .cover h2 { font-size: 14pt; font-weight: 400; color: #444; margin: 0 0 40px; }
+  .cover .meta { font-size: 10pt; color: #666; border-top: 1px solid #ddd; padding-top: 16px; width: 60%; }
+  .cover .meta div { margin: 3px 0; }
+
+  h1.section {
+    font-size: 18pt;
+    color: #14342a;
+    border-bottom: 3px solid #2f6f4f;
+    padding-bottom: 6px;
+    margin-top: 0;
+    page-break-before: always;
+  }
+  h1.section .num { color: #2f6f4f; margin-right: 8px; }
+  h2 { font-size: 13pt; color: #1e4a36; margin-top: 26px; margin-bottom: 8px; }
+  h3 { font-size: 11.5pt; color: #2f6f4f; margin-top: 18px; margin-bottom: 6px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+
+  .callout {
+    background: #f2f7f4;
+    border-left: 4px solid #2f6f4f;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 3px;
+    font-size: 9.8pt;
+  }
+  .callout.what   { border-left-color: #3b6ea5; background: #eef4fa; }
+  .callout.why    { border-left-color: #b8860b; background: #fbf6e8; }
+  .callout.how    { border-left-color: #2f6f4f; background: #eef7f1; }
+  .callout.where  { border-left-color: #7a4fa5; background: #f4eef8; }
+  .callout .label { font-weight: 700; text-transform: uppercase; font-size: 8.5pt; letter-spacing: 0.5px; display: block; margin-bottom: 3px; }
+
+  .warn {
+    background: #fdf1ee;
+    border-left: 4px solid #c0392b;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 3px;
+    font-size: 9.8pt;
+  }
+  .warn .label { font-weight: 700; color: #c0392b; text-transform: uppercase; font-size: 8.5pt; display: block; margin-bottom: 3px; }
+
+  code {
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9pt;
+    color: #a5262c;
+  }
+  pre {
+    background: #1e2530;
+    color: #d8e0ea;
+    padding: 12px 14px;
+    border-radius: 5px;
+    font-size: 8.6pt;
+    overflow-x: auto;
+    line-height: 1.45;
+    page-break-inside: avoid;
+    margin: 10px 0;
+  }
+  pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #d5d5d5;
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #e9f1ec; color: #14342a; font-weight: 700; }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  .file-path { font-family: "Consolas", monospace; color: #1e4a36; font-weight: 600; }
+  .badge {
+    display: inline-block;
+    font-size: 7.8pt;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-left: 6px;
+    text-transform: uppercase;
+  }
+  .badge.get { background: #dbeeff; color: #1259a0; }
+  .badge.post { background: #dcf5e0; color: #1c6b2c; }
+  .badge.patch { background: #fff2cf; color: #8a6300; }
+  .badge.put { background: #fbe6ff; color: #7a1e9c; }
+  .badge.delete { background: #fde2e0; color: #a5262c; }
+
+  .toc { column-count: 1; }
+  .toc ol { padding-left: 20px; }
+  .toc li { margin: 5px 0; }
+
+  .small-note { font-size: 8.8pt; color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="tag">Technical Implementation Guide</div>
+  <h1>DayFlow Backend</h1>
+  <h2>NestJS + MongoDB Architecture, Authentication, and Migration from Firebase</h2>
+  <div class="meta">
+    <div><strong>Scope:</strong> Backend (NestJS/MongoDB) and its integration with the Next.js frontend</div>
+    <div><strong>Purpose:</strong> Study reference for viva / interview preparation</div>
+    <div><strong>Based on:</strong> Direct inspection of the source code in this repository</div>
+  </div>
+</div>
+
+<div class="toc" style="page-break-after: always;">
+<h1 class="section" style="page-break-before: avoid;">Table of Contents</h1>
+<ol>
+<li>Overall Architecture</li>
+<li>Firebase &rarr; NestJS + MongoDB Migration</li>
+<li>Backend Folder Structure</li>
+<li>NestJS Modules and Their Responsibilities</li>
+<li>Controllers, Services, DTOs and Schemas</li>
+<li>MongoDB / Mongoose Implementation</li>
+<li>JWT Authentication</li>
+<li>Access Token + Refresh Token Flow</li>
+<li>Password Hashing</li>
+<li>Forgot Password, Password Reset, and Resend</li>
+<li>User Authentication and Ownership / Authorization</li>
+<li>All API Endpoints, Grouped by Module</li>
+<li>Frontend &rarr; api-client &rarr; NestJS &rarr; MongoDB Request Flow</li>
+<li>Validation and Error Handling</li>
+<li>Notifications, Push, and Background Jobs</li>
+<li>Important Security Decisions</li>
+<li>Important Bugs Discovered and Fixed During Migration</li>
+<li>Environment Variables</li>
+<li>How to Run Frontend and Backend Locally</li>
+<li>End-to-End Example: Creating a Task</li>
+<li>What Was Removed From Firebase, and Why</li>
+<li>Important Limitations That Still Exist</li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">1.</span>Overall Architecture</h1>
+
+<div class="callout what"><span class="label">What</span>
+DayFlow is a personal life-management app split into two independently-run projects that live in the same Git repository:
+</div>
+
+<ul>
+<li><span class="file-path">src/</span> &mdash; a Next.js 16 (App Router) frontend, running on port <code>9002</code>.</li>
+<li><span class="file-path">backend/</span> &mdash; a standalone NestJS API server, running on port <code>3001</code>, talking to MongoDB Atlas through Mongoose.</li>
+</ul>
+
+<p>They are two separate Node.js processes with two separate <code>package.json</code> files and two separate <code>tsconfig.json</code> files. The frontend never talks to MongoDB directly &mdash; every piece of data goes through the NestJS backend's REST API.</p>
+
+<pre>Browser
+  │
+  ▼
+Next.js frontend (src/app/**)         — React components, pages
+  │  calls functions in
+  ▼
+src/lib/api-client.ts                 — fetch() wrapper, attaches JWT
+  │  HTTP requests (JSON) to http://localhost:3001/api/*
+  ▼
+NestJS backend (backend/src/**)       — Express under the hood
+  │  Controllers → Services → Mongoose Models
+  ▼
+MongoDB Atlas (cluster: dayflow database)</pre>
+
+<div class="callout why"><span class="label">Why this shape</span>
+The project originally used Firebase (Firebase Auth + Firestore + Firebase Storage + Firebase Admin) directly from the Next.js app, including a handful of Next.js API routes that used <code>firebase-admin</code> on the server side. Over the course of this project the entire data and auth layer was migrated to a self-hosted NestJS + MongoDB backend, so the app is no longer dependent on any Firebase product.
+</div>
+
+<h2>Why NestJS specifically</h2>
+<p>NestJS is a Node.js framework built on top of Express that enforces a consistent, modular structure (Controllers, Services, Modules, DTOs, Guards). This repository leans on that structure heavily: every feature (tasks, expenses, habits, ...) is implemented as its own NestJS module with the same shape, which is what makes the codebase predictable once you understand one module.</p>
+
+<h2>Authentication model at a glance</h2>
+<p>DayFlow uses stateless <strong>JWT access tokens</strong> for authorizing API calls, plus a stateful <strong>refresh token</strong> stored as an httpOnly cookie and tracked in MongoDB, so a session can be revoked (logout, password reset) even though JWTs themselves cannot be "un-signed". This is explained fully in Sections 7&ndash;9.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">2.</span>Firebase &rarr; NestJS + MongoDB Migration</h1>
+
+<div class="callout what"><span class="label">What changed</span>
+Every Firebase product used by the app was replaced by an equivalent built on the new backend, one feature at a time.
+</div>
+
+<table>
+<tr><th>Firebase product</th><th>Used for</th><th>Replaced by</th></tr>
+<tr><td>Firebase Auth (email/password)</td><td>Sign in / sign up</td><td>NestJS <code>AuthModule</code> issuing JWTs, passwords hashed with bcrypt (Section 7&ndash;9)</td></tr>
+<tr><td>Firebase Auth (anonymous)</td><td>"Continue as Guest"</td><td><code>POST /api/auth/guest</code> &mdash; a real MongoDB user document with <code>isAnonymous: true</code> and no email/password</td></tr>
+<tr><td>Firebase Auth (<code>sendPasswordResetEmail</code>)</td><td>Forgot password</td><td><code>POST /api/auth/forgot-password</code> / <code>reset-password</code> + Resend (Section 10)</td></tr>
+<tr><td>Cloud Firestore</td><td>Per-user documents under <code>users/&#123;uid&#125;/data/&#123;collection&#125;</code></td><td>Dedicated MongoDB collections, one per feature, each document owned by a real <code>userId</code> field (Section 6)</td></tr>
+<tr><td>Firebase Storage</td><td>Profile picture upload</td><td>Image is read client-side as a base64 <code>data:</code> URI and stored directly in the <code>photoUrl</code> field of the user document</td></tr>
+<tr><td>Firebase Admin SDK (in Next.js API routes)</td><td>Server-side Firestore reads/writes for cron jobs (<code>api/cron/send-reminders</code>, <code>api/cron/water-check</code>) and verifying ID tokens for push routes (<code>api/push/*</code>)</td><td>Logic ported into the NestJS <code>JobsModule</code>, querying MongoDB directly (Section 15)</td></tr>
+</table>
+
+<h2>Migration strategy</h2>
+<p>The migration was done incrementally and verified at each step, not as one big rewrite:</p>
+<ol>
+<li><strong>Auth first</strong> &mdash; because every other feature depends on having an authenticated user id available.</li>
+<li><strong>One feature at a time</strong> &mdash; Notes, Credentials, Notifications/Push/Settings, Expenses, Habits, Planner, then the Dashboard widgets that reuse those same features, then Profile.</li>
+<li><strong>Verification by curl</strong> &mdash; every new/changed endpoint was exercised directly with <code>curl</code> against the running backend (register a throwaway user, call the endpoint, inspect the JSON, delete the test data) before wiring the frontend to it.</li>
+<li><strong>Full Firebase removal last</strong> &mdash; once every feature had a working backend equivalent, all Firebase SDK code, config files, and npm packages were deleted in one pass (Section 21).</li>
+</ol>
+
+<div class="callout how"><span class="label">Where</span>
+The single biggest structural difference: Firestore's old shape stored <em>one document per collection per user</em>, e.g. <span class="file-path">users/{uid}/data/todos</span> holding <code>&#123; items: [...] &#125;</code>. MongoDB instead stores <em>one document per item</em> (e.g. one document per task) inside a shared <code>tasks</code> collection, with every document carrying its own <code>userId</code> field. This is why almost every list in the app now uses a real MongoDB <code>_id</code> as its identifier instead of a client-generated string id.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">3.</span>Backend Folder Structure</h1>
+
+<pre>backend/
+├── src/
+│   ├── main.ts                          — application bootstrap (Section 7 &amp; 14)
+│   ├── app.module.ts                    — root module, registers Mongoose connection + every feature module
+│   ├── common/
+│   │   ├── decorators/
+│   │   │   └── current-user.decorator.ts
+│   │   ├── guards/
+│   │   │   └── jwt-auth.guard.ts
+│   │   └── filters/
+│   │       └── http-exception.filter.ts
+│   └── modules/
+│       ├── auth/
+│       │   ├── auth.controller.ts
+│       │   ├── auth.service.ts
+│       │   ├── auth.module.ts
+│       │   ├── mail.service.ts          — Resend wrapper
+│       │   ├── dto/auth.dto.ts
+│       │   ├── schemas/refresh-session.schema.ts
+│       │   ├── schemas/password-reset-token.schema.ts
+│       │   └── strategies/jwt.strategy.ts
+│       ├── users/
+│       │   ├── users.controller.ts
+│       │   ├── users.service.ts
+│       │   ├── users.module.ts
+│       │   ├── dto/update-user.dto.ts
+│       │   └── schemas/user.schema.ts
+│       ├── tasks/tasks.module.ts        — schema + DTO + service + controller in ONE file
+│       ├── expenses/expenses.module.ts  — same pattern (Transaction + Budget)
+│       ├── habits/habits.module.ts      — same pattern (Habit + GymSettings)
+│       ├── planner/planner.module.ts    — same pattern (PlannerSchedule)
+│       ├── notes/notes.module.ts        — same pattern (Note)
+│       ├── credentials/credentials.module.ts — same pattern (Credential)
+│       ├── notifications/notifications.module.ts — same pattern (Notification)
+│       ├── push/push.module.ts          — same pattern (PushSubscription)
+│       ├── jobs/jobs.module.ts          — cron-style endpoints, reuses schemas above
+│       └── health/health.module.ts      — DB ping endpoint
+├── .env / .env.example
+├── nest-cli.json
+├── package.json
+└── tsconfig.json</pre>
+
+<div class="callout why"><span class="label">Why two different file styles</span>
+<code>auth</code> and <code>users</code> are split across multiple files (controller / service / dto / schema each in their own file) because they carry more logic and are imported by other modules. Every other feature module (<code>tasks</code>, <code>expenses</code>, <code>habits</code>, <code>planner</code>, <code>notes</code>, <code>credentials</code>, <code>notifications</code>, <code>push</code>) instead packs its schema, DTO, service, controller, and module registration into a <em>single dense file</em>, because each one is a small, self-contained CRUD feature with no cross-module dependencies. Once you understand <span class="file-path">tasks.module.ts</span> (Section 5), you can read any of the others the same way.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">4.</span>NestJS Modules and Their Responsibilities</h1>
+
+<table>
+<tr><th>Module</th><th>File</th><th>MongoDB collection(s)</th><th>Responsibility</th></tr>
+<tr><td><code>AuthModule</code></td><td>modules/auth/auth.module.ts</td><td><code>refresh_sessions</code>, <code>password_reset_tokens</code></td><td>Register, login, guest login, refresh, logout, change email/password, forgot/reset password</td></tr>
+<tr><td><code>UsersModule</code></td><td>modules/users/users.module.ts</td><td><code>users</code></td><td>Read/update the current user's profile (username, email, phone, photo, theme)</td></tr>
+<tr><td><code>TasksModule</code></td><td>modules/tasks/tasks.module.ts</td><td><code>tasks</code></td><td>To-do items shown on the Dashboard</td></tr>
+<tr><td><code>ExpensesModule</code></td><td>modules/expenses/expenses.module.ts</td><td><code>transactions</code>, <code>budgets</code></td><td>Income/expense transactions and the monthly budget</td></tr>
+<tr><td><code>HabitsModule</code></td><td>modules/habits/habits.module.ts</td><td><code>habits</code>, <code>gym_settings</code></td><td>Habit tracker + the consolidated "Gym Tracker" data blob</td></tr>
+<tr><td><code>PlannerModule</code></td><td>modules/planner/planner.module.ts</td><td><code>planner_schedules</code></td><td>The weekly schedule (one document per user, a map of day &rarr; items)</td></tr>
+<tr><td><code>NotesModule</code></td><td>modules/notes/notes.module.ts</td><td><code>notes</code></td><td>Text and checklist notes</td></tr>
+<tr><td><code>CredentialsModule</code></td><td>modules/credentials/credentials.module.ts</td><td><code>credentials</code></td><td>The password manager's stored entries</td></tr>
+<tr><td><code>NotificationsModule</code></td><td>modules/notifications/notifications.module.ts</td><td><code>notifications</code></td><td>In-app reminder notifications</td></tr>
+<tr><td><code>PushModule</code></td><td>modules/push/push.module.ts</td><td><code>push_subscriptions</code></td><td>Browser Web Push subscription storage</td></tr>
+<tr><td><code>JobsModule</code></td><td>modules/jobs/jobs.module.ts</td><td>(reads Notification/Habit/PushSubscription)</td><td>Cron-triggered reminder + hydration push notifications</td></tr>
+<tr><td><code>HealthModule</code></td><td>modules/health/health.module.ts</td><td>&mdash;</td><td>Database connectivity check, <code>GET /api/health/database</code></td></tr>
+</table>
+
+<p>All twelve modules are registered once, in <span class="file-path">backend/src/app.module.ts</span>, alongside the global Mongoose connection setup.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">5.</span>Controllers, Services, DTOs and Schemas</h1>
+
+<p>Every feature module follows the exact same four-part pattern. Here is the complete, real implementation of the Tasks feature (<span class="file-path">backend/src/modules/tasks/tasks.module.ts</span>), annotated part by part:</p>
+
+<h2>1. Schema &mdash; what gets stored in MongoDB</h2>
+<pre>@Schema({ timestamps: true, collection: 'tasks' })
+class Task {
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  userId!: Types.ObjectId;
+
+  @Prop({ required: true, trim: true, maxlength: 500 })
+  text!: string;
+
+  @Prop({ default: false })
+  completed!: boolean;
+
+  @Prop({ enum: ['high', 'medium', 'low'] })
+  priority?: string;
+}
+const TaskSchema = SchemaFactory.createForClass(Task);</pre>
+<div class="callout what"><span class="label">What</span> A Mongoose schema, declared with NestJS's decorator syntax (<code>@Schema</code>/<code>@Prop</code>) instead of a plain Mongoose <code>new Schema(&#123;...&#125;)</code> call. It describes the shape, types, and constraints of a document in the <code>tasks</code> collection.</div>
+
+<h2>2. DTO &mdash; what a request body must look like</h2>
+<pre>class TaskDto {
+  @IsString() @MaxLength(500) text!: string;
+  @IsOptional() @IsBoolean() completed?: boolean;
+  @IsOptional() @IsIn(['high', 'medium', 'low']) priority?: string;
+}</pre>
+<div class="callout what"><span class="label">What</span> A plain class decorated with <code>class-validator</code> decorators. NestJS's global <code>ValidationPipe</code> (Section 14) uses this class to validate every incoming request body before it reaches the controller method.</div>
+
+<h2>3. Service &mdash; the actual database logic</h2>
+<pre>@Injectable()
+class TasksService {
+  constructor(@InjectModel(Task.name) private readonly model: Model&lt;Task&gt;) {}
+
+  findAll(userId: string) {
+    return this.model.find({ userId }).sort({ createdAt: -1 }).lean().exec();
+  }
+  create(userId: string, dto: TaskDto) {
+    return this.model.create({ ...dto, userId });
+  }
+  update(userId: string, id: string, dto: TaskDto) {
+    return this.model.findOneAndUpdate({ _id: id, userId }, dto, { new: true, runValidators: true }).exec();
+  }
+  remove(userId: string, id: string) {
+    return this.model.deleteOne({ _id: id, userId }).exec();
+  }
+}</pre>
+<div class="callout why"><span class="label">Why every query includes <code>userId</code></span> This is the ownership/authorization mechanism for the whole app (see Section 11). A user can never read, update, or delete another user's task, because the query itself only ever matches documents whose <code>userId</code> equals the id taken from their own verified JWT.</div>
+
+<h2>4. Controller &mdash; the HTTP routes</h2>
+<pre>@Controller('tasks')
+@UseGuards(JwtAuthGuard)
+class TasksController {
+  constructor(private readonly service: TasksService) {}
+
+  @Get()    all(@CurrentUser() user: { sub: string }) { return this.service.findAll(user.sub); }
+  @Post()   create(@CurrentUser() user, @Body() dto: TaskDto) { return this.service.create(user.sub, dto); }
+  @Patch(':id') update(@CurrentUser() user, @Param('id') id: string, @Body() dto: TaskDto) { return this.service.update(user.sub, id, dto); }
+  @Delete(':id') remove(@CurrentUser() user, @Param('id') id: string) { return this.service.remove(user.sub, id); }
+}</pre>
+<div class="callout where"><span class="label">Where</span> <code>@UseGuards(JwtAuthGuard)</code> on the whole controller means every route in it requires a valid JWT (Section 7). <code>@CurrentUser()</code> is a custom parameter decorator (<span class="file-path">common/decorators/current-user.decorator.ts</span>) that pulls the decoded JWT payload off the request object &mdash; it is never something the client can set directly.</div>
+
+<h3>Module registration</h3>
+<pre>@Module({
+  imports: [MongooseModule.forFeature([{ name: Task.name, schema: TaskSchema }])],
+  controllers: [TasksController],
+  providers: [TasksService],
+})
+export class TasksModule {}</pre>
+
+<p>Every other feature module (Expenses, Habits, Planner, Notes, Credentials, Notifications, Push) is built from the exact same four pieces, just with a different schema/DTO shape. The only structural variations worth knowing:</p>
+<ul>
+<li><strong>Expenses</strong> and <strong>Habits</strong> each declare <em>two</em> schemas in one file (Transaction+Budget, Habit+GymSettings) because those two pieces of data are logically related.</li>
+<li><strong>Habits</strong>' <code>PATCH /habits</code> and <strong>Planner</strong>'s <code>PUT /planner</code> are <em>replace-all</em> operations, not per-item updates &mdash; see Section 17 for why this matters.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">6.</span>MongoDB / Mongoose Implementation</h1>
+
+<h2>Connecting to MongoDB</h2>
+<div class="callout where"><span class="label">Where</span> <span class="file-path">backend/src/app.module.ts</span></div>
+<pre>MongooseModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => ({
+    uri: config.getOrThrow&lt;string&gt;('MONGODB_URI'),
+    serverSelectionTimeoutMS: Number(config.get('MONGODB_SERVER_SELECTION_TIMEOUT_MS', '5000')),
+    connectTimeoutMS: Number(config.get('MONGODB_CONNECT_TIMEOUT_MS', '10000')),
+  }),
+});</pre>
+<p>This registers a single, shared MongoDB connection (to a MongoDB Atlas cluster) for the whole application. Every feature module then registers its own schema against that shared connection with <code>MongooseModule.forFeature([...])</code>.</p>
+
+<h2>Key Mongoose concepts used throughout the backend</h2>
+
+<table>
+<tr><th>Concept</th><th>What it does</th><th>Where used</th></tr>
+<tr><td><code>@Schema(&#123; timestamps: true &#125;)</code></td><td>Automatically adds and maintains <code>createdAt</code>/<code>updatedAt</code> fields on every document</td><td>Every schema in the backend</td></tr>
+<tr><td><code>@Prop(&#123; type: Types.ObjectId, ref: 'User' &#125;)</code></td><td>Declares a field as a reference to a document in the <code>users</code> collection (the ownership foreign key)</td><td>Every feature schema's <code>userId</code> field</td></tr>
+<tr><td><code>index: true</code> / <code>schema.index(&#123;...&#125;)</code></td><td>Creates a MongoDB index for faster queries (e.g. all of a user's transactions sorted by date)</td><td><code>tasks</code>, <code>transactions</code>, <code>notes</code>, <code>notifications</code>, <code>credentials</code>, <code>push_subscriptions</code></td></tr>
+<tr><td><code>expires: 0</code> on a Date field</td><td>A TTL index &mdash; MongoDB automatically deletes the document once that date/time has passed</td><td><code>RefreshSession.expiresAt</code>, <code>PasswordResetToken.expiresAt</code></td></tr>
+<tr><td><code>.lean()</code></td><td>Returns plain JavaScript objects instead of full Mongoose Documents (faster, since the app only reads the data and doesn't need Mongoose's change-tracking)</td><td>Most read-only queries (<code>find</code>, list endpoints)</td></tr>
+<tr><td><code>findOneAndUpdate(..., &#123; upsert: true &#125;)</code></td><td>"Create if it doesn't exist, otherwise update it" &mdash; used for one-document-per-user settings</td><td><code>Budget</code>, <code>GymSettings</code>, <code>PlannerSchedule</code></td></tr>
+<tr><td><code>select: false</code> on a Prop</td><td>Excludes that field from query results by default (it has to be explicitly requested)</td><td><code>User.passwordHash</code> &mdash; see Section 9</td></tr>
+<tr><td><code>select('+passwordHash')</code></td><td>Explicitly opts back in to a <code>select:false</code> field for that one query</td><td><code>UsersService.findByEmail</code>, <code>findByIdWithPassword</code></td></tr>
+</table>
+
+<h2>MongoDB collections in this project</h2>
+<pre>users, refresh_sessions, password_reset_tokens,
+tasks, transactions, budgets,
+habits, gym_settings,
+planner_schedules,
+notes, credentials, notifications, push_subscriptions</pre>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">7.</span>JWT Authentication</h1>
+
+<div class="callout what"><span class="label">What</span>
+JWT (JSON Web Token) is a signed, self-contained string that encodes a small payload (here: <code>&#123; sub: userId, email &#125;</code>) plus an expiry time. Because it is cryptographically signed with a server-only secret, the server can trust its contents without needing to look anything up &mdash; that is what "stateless" authentication means.
+</div>
+
+<h2>How the pieces fit together</h2>
+<table>
+<tr><th>Piece</th><th>File</th><th>Role</th></tr>
+<tr><td><code>JwtModule.registerAsync(...)</code></td><td>modules/auth/auth.module.ts</td><td>Registers <code>@nestjs/jwt</code>'s <code>JwtService</code> (used to sign/verify tokens). Registered with empty default options because each individual sign call supplies its own secret and expiry.</td></tr>
+<tr><td><code>JwtStrategy</code></td><td>modules/auth/strategies/jwt.strategy.ts</td><td>A Passport.js strategy that extracts the token from the <code>Authorization: Bearer &lt;token&gt;</code> header and verifies its signature against <code>JWT_SECRET</code>.</td></tr>
+<tr><td><code>JwtAuthGuard</code></td><td>common/guards/jwt-auth.guard.ts</td><td>A one-line NestJS Guard (<code>extends AuthGuard('jwt')</code>) applied to controllers with <code>@UseGuards(JwtAuthGuard)</code> to require a valid token.</td></tr>
+<tr><td><code>CurrentUser</code> decorator</td><td>common/decorators/current-user.decorator.ts</td><td>Pulls the verified payload (<code>request.user</code>, set by Passport after the guard succeeds) into a controller method's parameter.</td></tr>
+</table>
+
+<h3>The actual JwtStrategy code</h3>
+<pre>@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(config: ConfigService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: config.getOrThrow&lt;string&gt;('JWT_SECRET'),
+    });
+  }
+  validate(payload: { sub: string; email?: string }) {
+    return payload; // becomes request.user
+  }
+}</pre>
+
+<div class="callout how"><span class="label">How authorization actually happens on every request</span>
+<ol>
+<li>Client sends <code>Authorization: Bearer &lt;accessToken&gt;</code>.</li>
+<li><code>JwtAuthGuard</code> triggers Passport, which runs <code>JwtStrategy</code>.</li>
+<li>Passport verifies the signature and expiry using <code>JWT_SECRET</code>. If invalid/expired, the request is rejected with <code>401 Unauthorized</code> before it ever reaches the controller.</li>
+<li>If valid, <code>validate()</code> returns the payload, which Passport attaches as <code>request.user</code>.</li>
+<li>The controller reads it via <code>@CurrentUser()</code>, e.g. <code>user.sub</code> is the MongoDB user id.</li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">8.</span>Access Token + Refresh Token Flow</h1>
+
+<div class="callout what"><span class="label">What and why two tokens</span>
+A single long-lived token would be dangerous to keep in browser JavaScript (if stolen via XSS, an attacker has access for a long time). DayFlow instead uses a <strong>short-lived access token</strong> (15 minutes, kept only in a JS variable, never persisted to localStorage) for calling the API, and a <strong>long-lived refresh token</strong> (30 days, stored as an <strong>httpOnly cookie</strong> so client-side JavaScript can never read it) used only to mint new access tokens.
+</div>
+
+<h2>Issuing tokens</h2>
+<div class="callout where"><span class="label">Where</span> <code>AuthService.issueTokens()</code>, <span class="file-path">backend/src/modules/auth/auth.service.ts</span></div>
+<pre>private async issueTokens(userId: string, email?: string) {
+  const payload = { sub: userId, email };
+  const accessToken = await this.jwt.signAsync(payload, {
+    secret: JWT_SECRET, expiresIn: JWT_ACCESS_EXPIRES_IN, // default 15m
+  });
+  const refreshToken = await this.jwt.signAsync(payload, {
+    secret: JWT_REFRESH_SECRET, expiresIn: JWT_REFRESH_EXPIRES_IN, // default 30d
+  });
+  await this.sessions.create({ userId, tokenHash: sha256(refreshToken), expiresAt });
+  return { accessToken, refreshToken };
+}</pre>
+<p>Note the two tokens are signed with <strong>two different secrets</strong> (<code>JWT_SECRET</code> vs <code>JWT_REFRESH_SECRET</code>), so a leaked access token can never be used to mint new tokens.</p>
+
+<h2>Where each token lives</h2>
+<div class="callout where"><span class="label">Where</span> <code>AuthController</code>, <span class="file-path">backend/src/modules/auth/auth.controller.ts</span></div>
+<pre>private setRefreshCookie(res: Response, token: string) {
+  res.cookie('refresh_token', token, {
+    httpOnly: true,       // JavaScript cannot read this cookie at all
+    secure: true,
+    sameSite: 'none',     // needed because frontend (9002) and backend (3001) are different origins
+    path: '/api/auth',    // only ever sent to /api/auth/* routes, nowhere else
+    maxAge: 30 days,
+  });
+}</pre>
+<p>Every auth endpoint (<code>register</code>, <code>login</code>, <code>guest</code>, <code>refresh</code>) calls this and returns only <code>&#123; accessToken &#125;</code> in the JSON body &mdash; the refresh token is <strong>never</strong> present in any response body or visible to frontend JavaScript.</p>
+
+<h2>The <code>refresh_sessions</code> collection (why refresh tokens can be revoked)</h2>
+<div class="callout where"><span class="label">Where</span> <span class="file-path">backend/src/modules/auth/schemas/refresh-session.schema.ts</span></div>
+<pre>@Schema({ timestamps: true, collection: 'refresh_sessions' })
+export class RefreshSession {
+  userId: Types.ObjectId;
+  tokenHash: string;        // SHA-256 hash of the token — the raw token is never stored
+  expiresAt: Date;          // TTL index: MongoDB auto-deletes the row after this
+  revokedAt?: Date;         // set on logout, refresh, or password reset
+}</pre>
+<div class="callout how"><span class="label">How refresh + rotation works</span>
+<ol>
+<li>Client's access token expires; the next API call gets <code>401</code>.</li>
+<li>Frontend calls <code>POST /api/auth/refresh</code> (no body needed &mdash; the httpOnly cookie is sent automatically by the browser).</li>
+<li><code>AuthService.refresh()</code> verifies the refresh JWT's signature, then looks up its hash in <code>refresh_sessions</code>, checking it exists, is not revoked, and has not expired.</li>
+<li>If valid: that session row is marked <code>revokedAt</code> (so it can never be used again &mdash; this is <strong>refresh token rotation</strong>), and a brand new access+refresh pair is issued and stored.</li>
+<li>If invalid: <code>401 Unauthorized</code>, and the frontend treats the user as logged out.</li>
+</ol>
+</div>
+
+<h2>How the frontend uses this automatically</h2>
+<div class="callout where"><span class="label">Where</span> <code>apiFetch()</code>, <span class="file-path">src/lib/api-client.ts</span></div>
+<pre>export async function apiFetch&lt;T&gt;(path, init, retry = true) {
+  const res = await fetch(url, { ...init, credentials: 'include', headers: { Authorization: `Bearer ${accessToken}`, ... } });
+  if (res.status === 401 &amp;&amp; retry) {
+    const refreshed = await refreshSession();       // POST /auth/refresh
+    if (refreshed) return apiFetch(path, init, false); // retry the original call ONCE
+  }
+  if (!res.ok) await parseError(res);
+  return res.json();
+}</pre>
+<p>This means every page in the app can just call <code>apiFetch('/tasks')</code> without ever thinking about token expiry &mdash; a mid-session expiry is invisible to the rest of the UI.</p>
+
+<h2>Logout and password reset also revoke sessions</h2>
+<p><code>logout()</code> revokes the one session tied to the cookie being cleared. <code>resetPassword()</code> goes further and revokes <strong>all</strong> of that user's refresh sessions with <code>sessions.updateMany(&#123;userId&#125;, &#123;revokedAt&#125;)</code> &mdash; so resetting a password immediately signs the user out everywhere (Section 10 &amp; 16).</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">9.</span>Password Hashing</h1>
+
+<div class="callout what"><span class="label">What</span>
+Passwords are never stored in a form that could be read back. They are hashed with <strong>bcrypt</strong> (via the <code>bcrypt</code> npm package), a slow, salted, one-way hashing algorithm purpose-built for passwords.
+</div>
+
+<div class="callout why"><span class="label">Why bcrypt, and why cost factor 12</span>
+Bcrypt is deliberately slow (tunable via a "cost factor") to make brute-force guessing of leaked hashes impractical. Cost factor <code>12</code> (used throughout this codebase) is a widely-recommended default that takes roughly 200&ndash;300ms per hash on typical hardware &mdash; fast enough for a real login, slow enough to make guessing millions of passwords expensive.
+</div>
+
+<h2>Where hashing happens</h2>
+<table>
+<tr><th>Operation</th><th>File / method</th><th>Code</th></tr>
+<tr><td>Register</td><td><code>AuthService.register()</code></td><td><code>passwordHash: await bcrypt.hash(dto.password, 12)</code></td></tr>
+<tr><td>Login</td><td><code>AuthService.login()</code></td><td><code>await bcrypt.compare(dto.password, user.passwordHash)</code></td></tr>
+<tr><td>Change password</td><td><code>AuthService.changePassword()</code></td><td>compares current password with bcrypt, then re-hashes the new one</td></tr>
+<tr><td>Reset password</td><td><code>AuthService.resetPassword()</code></td><td>re-hashes the new password after validating the reset token</td></tr>
+</table>
+
+<h2>The <code>passwordHash</code> field is hidden by default</h2>
+<div class="callout where"><span class="label">Where</span> <span class="file-path">backend/src/modules/users/schemas/user.schema.ts</span></div>
+<pre>@Prop({ select: false })
+passwordHash?: string;</pre>
+<p>Because of <code>select: false</code>, a normal <code>User.findById(...)</code> query will <strong>never</strong> return the hash &mdash; not even by accident. Anywhere the backend actually needs to compare a password, it explicitly opts in with <code>.select('+passwordHash')</code> (see <code>UsersService.findByEmail</code> and <code>findByIdWithPassword</code>). This means an accidental typo like returning a raw user document from an API response could never leak a password hash.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">10.</span>Forgot Password, Password Reset, and Resend</h1>
+
+<div class="callout what"><span class="label">What</span>
+A self-service "I forgot my password" flow: the user enters their email, receives an email with a one-time link, and sets a new password from that link &mdash; without ever needing their old password.
+</div>
+
+<h2>The moving parts</h2>
+<table>
+<tr><th>Piece</th><th>File</th></tr>
+<tr><td><code>PasswordResetToken</code> schema</td><td>modules/auth/schemas/password-reset-token.schema.ts</td></tr>
+<tr><td><code>MailService</code> (Resend wrapper)</td><td>modules/auth/mail.service.ts</td></tr>
+<tr><td><code>RequestPasswordResetDto</code>, <code>ResetPasswordDto</code></td><td>modules/auth/dto/auth.dto.ts</td></tr>
+<tr><td><code>AuthService.requestPasswordReset()</code> / <code>resetPassword()</code></td><td>modules/auth/auth.service.ts</td></tr>
+<tr><td><code>POST /api/auth/forgot-password</code> / <code>reset-password</code></td><td>modules/auth/auth.controller.ts (both public &mdash; no <code>JwtAuthGuard</code>)</td></tr>
+<tr><td>Login page's "Forgot Password?" dialog</td><td>src/app/login/page.tsx</td></tr>
+<tr><td>The page the emailed link opens</td><td>src/app/reset-password/page.tsx</td></tr>
+</table>
+
+<h2>The token schema</h2>
+<pre>@Schema({ timestamps: true, collection: 'password_reset_tokens' })
+export class PasswordResetToken {
+  userId: Types.ObjectId;
+  tokenHash: string;     // SHA-256 hash — raw token is never stored
+  expiresAt: Date;       // TTL index — auto-deleted by MongoDB after 30 minutes
+  usedAt?: Date;         // set the moment the token is used, enforcing single-use
+}</pre>
+
+<h2>Requesting a reset</h2>
+<pre>async requestPasswordReset(email: string) {
+  const user = await this.users.findByEmail(email);
+  if (user?.email) {
+    const rawToken = randomBytes(32).toString('hex');        // 256-bit random token
+    await this.resetTokens.create({ userId: user._id, tokenHash: sha256(rawToken), expiresAt: now + 30min });
+    const resetLink = `${FRONTEND_URL}/reset-password?token=${rawToken}`;
+    await this.mail.sendPasswordResetEmail(user.email, resetLink);
+  }
+  return { success: true };   // ALWAYS success, whether or not the email exists
+}</pre>
+<div class="callout why"><span class="label">Why it always returns success</span>
+If the endpoint returned a different response for "email not found" versus "email sent", an attacker could use it to check which email addresses have accounts on DayFlow (email/account enumeration). Returning an identical <code>&#123;success:true&#125;</code> either way closes that off. The frontend's copy reflects this too: "If an account exists for that email, we've sent a link..."
+</div>
+
+<h2>Completing a reset</h2>
+<pre>async resetPassword(token: string, newPassword: string) {
+  const resetToken = await this.resetTokens.findOne({
+    tokenHash: sha256(token), usedAt: { $exists: false }, expiresAt: { $gt: new Date() },
+  });
+  if (!resetToken) throw new UnauthorizedException('Invalid or expired reset link');
+  resetToken.usedAt = new Date();                    // single-use enforced here
+  await resetToken.save();
+  await this.users.updatePasswordHash(resetToken.userId, bcrypt.hash(newPassword, 12));
+  await this.sessions.updateMany({ userId: resetToken.userId }, { revokedAt: new Date() }); // sign out everywhere
+}</pre>
+
+<h2>Sending the email &mdash; Resend</h2>
+<div class="callout what"><span class="label">What is Resend</span>
+Resend is a transactional email API. <span class="file-path">mail.service.ts</span> wraps it in one method, <code>sendPasswordResetEmail(to, resetLink)</code>.
+</div>
+<pre>constructor(private readonly config: ConfigService) {
+  const apiKey = config.get('RESEND_API_KEY');
+  this.fromAddress = config.get('MAIL_FROM_ADDRESS', 'DayFlow &lt;onboarding@resend.dev&gt;');
+  this.client = apiKey ? new Resend(apiKey) : null;
+  if (!this.client) console.warn('RESEND_API_KEY is not configured. Password reset emails will not be sent.');
+}</pre>
+<div class="callout how"><span class="label">Graceful degradation</span>
+If <code>RESEND_API_KEY</code> is not set, the app still works end-to-end &mdash; it just silently skips the actual send (with a console warning) instead of crashing. This matches the same pattern used for VAPID/push keys (Section 15).
+</div>
+
+<div class="warn"><span class="label">Important operational limitation</span>
+Resend accounts without a verified sending domain run in "sandbox mode": the <code>from</code> address must be Resend's own <code>onboarding@resend.dev</code> (you cannot send <em>from</em> a domain you don't own, like a personal Gmail address), and email can currently only be delivered <em>to</em> the developer's own verified Resend account address, not to arbitrary users. This was discovered and fixed during testing &mdash; see Section 17. Real end users will not be able to receive reset emails until a custom domain is verified on the Resend account.
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">11.</span>User Authentication and Ownership / Authorization</h1>
+
+<div class="callout what"><span class="label">Authentication vs. Authorization</span>
+<strong>Authentication</strong> answers "who is making this request?" &mdash; handled entirely by <code>JwtAuthGuard</code> + <code>JwtStrategy</code> (Section 7). <strong>Authorization</strong> answers "is this user allowed to touch this specific piece of data?" &mdash; handled by every service method filtering its MongoDB query by that user's id.
+</div>
+
+<h2>The rule, applied everywhere</h2>
+<p>Every single feature query in the backend takes exactly this shape:</p>
+<pre>this.model.find({ userId })                                 // list
+this.model.create({ ...dto, userId })                        // create
+this.model.findOneAndUpdate({ _id: id, userId }, dto)         // update
+this.model.deleteOne({ _id: id, userId })                     // delete</pre>
+<p><code>userId</code> here always comes from <code>@CurrentUser()</code> &rarr; <code>user.sub</code> &rarr; the verified JWT payload. <strong>It is never taken from the request body, a URL parameter, or any other client-controlled input.</strong> This is what makes it impossible for User A to read, edit, or delete User B's data, even if they know the exact MongoDB <code>_id</code> of User B's document: the <code>findOneAndUpdate</code>/<code>deleteOne</code> filters on <em>both</em> <code>_id</code> <em>and</em> <code>userId</code>, so a mismatched owner simply matches zero documents.</p>
+
+<h2>Guest accounts</h2>
+<p><code>POST /api/auth/guest</code> creates a real MongoDB user document (<code>&#123;username: 'Guest User', isAnonymous: true&#125;</code>, no email, no password) and issues a normal JWT for it. From the rest of the backend's point of view, a guest is authenticated exactly like any other user &mdash; the only special-casing is <code>isAnonymous</code> being used by the frontend to hide account-security UI (email/password change) that doesn't apply to a passwordless account.</p>
+
+<h2>Anonymous data isolation via <code>sparse</code> email index</h2>
+<pre>@Prop({ unique: true, lowercase: true, trim: true, sparse: true })
+email?: string;</pre>
+<p><code>sparse: true</code> means the unique index only applies to documents that <em>have</em> an <code>email</code> field at all &mdash; so MongoDB allows unlimited guest users with no email, while still enforcing that every registered (non-guest) email is unique.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">12.</span>All API Endpoints, Grouped by Module</h1>
+
+<p><span class="small-note">All routes are prefixed with <code>/api</code> (set globally in <span class="file-path">main.ts</span> via <code>app.setGlobalPrefix('api')</code>). "Auth" column shows whether <code>JwtAuthGuard</code> is required.</span></p>
+
+<h2>Auth &mdash; <span class="file-path">/api/auth</span></h2>
+<table>
+<tr><th>Endpoint</th><th>Auth</th><th>Purpose</th></tr>
+<tr><td><span class="badge post">POST</span> /register</td><td>Public</td><td>Create an account (email + password + username)</td></tr>
+<tr><td><span class="badge post">POST</span> /login</td><td>Public</td><td>Sign in with email + password</td></tr>
+<tr><td><span class="badge post">POST</span> /guest</td><td>Public</td><td>Create a passwordless guest account</td></tr>
+<tr><td><span class="badge post">POST</span> /refresh</td><td>Cookie</td><td>Exchange the refresh cookie for a new access token (rotates the session)</td></tr>
+<tr><td><span class="badge post">POST</span> /logout</td><td>Cookie</td><td>Revoke the current refresh session</td></tr>
+<tr><td><span class="badge get">GET</span> /me</td><td>JWT</td><td>Return the decoded JWT payload (sub, email)</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /change-email</td><td>JWT</td><td>Change email (requires current password)</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /change-password</td><td>JWT</td><td>Change password (requires current password)</td></tr>
+<tr><td><span class="badge post">POST</span> /forgot-password</td><td>Public</td><td>Send a password-reset email if the address is registered</td></tr>
+<tr><td><span class="badge post">POST</span> /reset-password</td><td>Public (token in body)</td><td>Set a new password using a valid, unused, unexpired reset token</td></tr>
+</table>
+
+<h2>Users &mdash; <span class="file-path">/api/users</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /me</td><td>Fetch the current user's public profile</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /me</td><td>Update username, email, phoneNumber, photoUrl, or theme</td></tr>
+</table>
+
+<h2>Tasks &mdash; <span class="file-path">/api/tasks</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /</td><td>List the user's tasks, newest first</td></tr>
+<tr><td><span class="badge post">POST</span> /</td><td>Create a task</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /:id</td><td>Update a task (full <code>TaskDto</code> required, incl. <code>text</code>)</td></tr>
+<tr><td><span class="badge delete">DELETE</span> /:id</td><td>Delete a task</td></tr>
+</table>
+
+<h2>Expenses &mdash; <span class="file-path">/api/expenses</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /transactions</td><td>List transactions, newest date first</td></tr>
+<tr><td><span class="badge post">POST</span> /transactions</td><td>Create a transaction</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /transactions/:id</td><td>Update a transaction (partial)</td></tr>
+<tr><td><span class="badge delete">DELETE</span> /transactions/:id</td><td>Delete a transaction</td></tr>
+<tr><td><span class="badge get">GET</span> /budget</td><td>Get the monthly budget (auto-created with a default of 5,000,000 cents on first read)</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /budget</td><td>Set the monthly budget</td></tr>
+</table>
+
+<h2>Habits &mdash; <span class="file-path">/api/habits</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /</td><td>List habits</td></tr>
+<tr><td><span class="badge patch">PATCH</span> / <span class="badge delete" style="margin-left:4px;">REPLACE-ALL</span></td><td>Replace the <em>entire</em> habit list (deletes all, re-inserts the given array)</td></tr>
+<tr><td><span class="badge get">GET</span> /gym</td><td>Get the Gym Tracker data blob (workout plan, nutrition logs, feature toggle)</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /gym <span class="badge delete" style="margin-left:4px;">REPLACE-ALL</span></td><td>Replace the entire Gym Tracker data blob</td></tr>
+</table>
+
+<h2>Planner &mdash; <span class="file-path">/api/planner</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /</td><td>Get the weekly schedule (auto-created empty on first read)</td></tr>
+<tr><td><span class="badge put">PUT</span> / <span class="badge delete" style="margin-left:4px;">REPLACE-ALL</span></td><td>Replace the entire <code>days</code> map</td></tr>
+</table>
+
+<h2>Notes &mdash; <span class="file-path">/api/notes</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /</td><td>List notes, newest first</td></tr>
+<tr><td><span class="badge post">POST</span> /</td><td>Create a note (text or checklist)</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /:id</td><td>Update a note (partial)</td></tr>
+<tr><td><span class="badge delete">DELETE</span> /:id</td><td>Delete a note</td></tr>
+</table>
+
+<h2>Credentials (Password Manager) &mdash; <span class="file-path">/api/credentials</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /</td><td>List saved credentials</td></tr>
+<tr><td><span class="badge post">POST</span> /</td><td>Create a credential entry</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /:id</td><td>Update a credential entry (partial)</td></tr>
+<tr><td><span class="badge delete">DELETE</span> /:id</td><td>Delete a credential entry</td></tr>
+</table>
+
+<h2>Notifications &mdash; <span class="file-path">/api/notifications</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /</td><td>List notifications, newest first</td></tr>
+<tr><td><span class="badge post">POST</span> /</td><td>Create a notification/reminder</td></tr>
+<tr><td><span class="badge patch">PATCH</span> /:id</td><td>Update a notification (e.g. mark read)</td></tr>
+<tr><td><span class="badge delete">DELETE</span> /:id</td><td>Delete a notification</td></tr>
+</table>
+
+<h2>Push &mdash; <span class="file-path">/api/push</span> (all JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge post">POST</span> /subscriptions</td><td>Save (upsert by endpoint) a browser push subscription</td></tr>
+<tr><td><span class="badge delete">DELETE</span> /subscriptions</td><td>Remove a push subscription</td></tr>
+<tr><td><span class="badge post">POST</span> /test</td><td>Placeholder &mdash; returns success without sending (real delivery lives in JobsModule)</td></tr>
+</table>
+
+<h2>Jobs &mdash; <span class="file-path">/api/jobs</span> (Cron-secret protected, not JWT)</h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge post">POST</span> /send-reminders</td><td>Push today's due in-app reminders to subscribed devices</td></tr>
+<tr><td><span class="badge post">POST</span> /water-check</td><td>Push a hydration nudge to users behind their water-intake goal at 11am/5pm/9pm checkpoints</td></tr>
+</table>
+<p class="small-note">Both require header <code>Authorization: Bearer &lt;CRON_SECRET&gt;</code> instead of a user JWT &mdash; they are meant to be triggered by an external scheduler, not a logged-in user.</p>
+
+<h2>Health &mdash; <span class="file-path">/api/health</span></h2>
+<table>
+<tr><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td><span class="badge get">GET</span> /database</td><td>Pings MongoDB; returns 200 if connected, 503 if not</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">13.</span>Frontend &rarr; api-client &rarr; NestJS &rarr; MongoDB Request Flow</h1>
+
+<div class="callout where"><span class="label">Where</span> <span class="file-path">src/lib/api-client.ts</span> is the single file every page/hook goes through to talk to the backend.</div>
+
+<h2>The building blocks of <code>api-client.ts</code></h2>
+<table>
+<tr><th>Export</th><th>Role</th></tr>
+<tr><td><code>API_BASE_URL</code></td><td>Read from <code>NEXT_PUBLIC_BACKEND_URL</code> (defaults to <code>http://localhost:3001/api</code>)</td></tr>
+<tr><td>module-level <code>accessToken</code> variable</td><td>Held only in memory (not localStorage) &mdash; cleared on full page reload, restored via <code>refreshSession()</code></td></tr>
+<tr><td><code>login/register/guestLogin</code></td><td>Call the token-issuing auth endpoints, store the returned access token</td></tr>
+<tr><td><code>refreshSession()</code></td><td>Calls <code>/auth/refresh</code>; used on app load and by <code>apiFetch</code>'s auto-retry</td></tr>
+<tr><td><code>apiFetch&lt;T&gt;(path, init)</code></td><td>The generic, authenticated fetch wrapper used by every feature page</td></tr>
+<tr><td><code>ApiError</code></td><td>A custom <code>Error</code> subclass carrying the HTTP status code, so callers can branch on e.g. <code>error.status === 401</code></td></tr>
+</table>
+
+<h2>A typical call, start to finish</h2>
+<pre>// in a page component, e.g. src/app/dashboard/page.tsx
+const created = await apiFetch&lt;ApiTask&gt;('/tasks', {
+  method: 'POST',
+  body: JSON.stringify({ text, completed: false, priority }),
+});</pre>
+<ol>
+<li><strong>apiFetch</strong> builds the full URL (<code>API_BASE_URL + '/tasks'</code>), attaches <code>Content-Type: application/json</code> (because a body is present), <code>Authorization: Bearer &lt;accessToken&gt;</code>, and <code>credentials: 'include'</code> (so the httpOnly refresh cookie travels with the request even though this call doesn't need it directly).</li>
+<li>The browser sends the request cross-origin (frontend on :9002, backend on :3001).</li>
+<li><strong>NestJS's CORS middleware</strong> (configured in <span class="file-path">main.ts</span> with <code>origin: FRONTEND_URL, credentials: true</code>) allows it.</li>
+<li><strong>Global body parser, cookie parser, ValidationPipe</strong> run (Section 14).</li>
+<li><strong>JwtAuthGuard</strong> verifies the token; <strong>TasksController.create</strong> runs; <strong>TasksService.create</strong> inserts into MongoDB.</li>
+<li>The created document (with its new <code>_id</code>, <code>createdAt</code>, <code>updatedAt</code>) comes back as JSON.</li>
+<li><strong>apiFetch</strong> checks <code>res.ok</code>; if not ok, throws <code>ApiError</code>. If ok, returns <code>res.json()</code> to the caller.</li>
+<li>The page maps the raw <code>&#123;_id, ...&#125;</code> shape into the frontend's own <code>TodoItem</code> type (<code>_id</code> &rarr; <code>id</code>) and updates React state.</li>
+</ol>
+
+<p>See Section 20 for the fully worked version of this exact example, including the 401/refresh path.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">14.</span>Validation and Error Handling</h1>
+
+<h2>Request validation &mdash; the global <code>ValidationPipe</code></h2>
+<div class="callout where"><span class="label">Where</span> <span class="file-path">backend/src/main.ts</span></div>
+<pre>app.useGlobalPipes(new ValidationPipe({
+  whitelist: true,             // strip any property not declared on the DTO
+  transform: true,             // convert plain JSON into an instance of the DTO class
+  forbidNonWhitelisted: true,  // REJECT (400) requests that include undeclared properties
+}));</pre>
+<div class="callout why"><span class="label">Why <code>forbidNonWhitelisted</code> matters</span>
+This makes every DTO an explicit allow-list. If a client sends a field the DTO doesn't declare (e.g. trying to sneak a <code>userId</code> into a task-creation body), the whole request is rejected with <code>400 Bad Request</code> instead of the extra field being silently ignored or, worse, accidentally used.
+</div>
+
+<h2>class-validator decorators used across DTOs</h2>
+<table>
+<tr><th>Decorator</th><th>Meaning</th></tr>
+<tr><td><code>@IsString()</code>, <code>@IsBoolean()</code>, <code>@IsInt()</code>, <code>@IsObject()</code></td><td>Type check</td></tr>
+<tr><td><code>@IsEmail()</code></td><td>Must look like a valid email address</td></tr>
+<tr><td><code>@IsOptional()</code></td><td>Field may be omitted entirely</td></tr>
+<tr><td><code>@IsDefined()</code></td><td>Field must be present, even if its type is <code>unknown</code> (used for <code>Note.content</code>, see Section 17)</td></tr>
+<tr><td><code>@MinLength()</code> / <code>@MaxLength()</code></td><td>String length bounds</td></tr>
+<tr><td><code>@Min()</code></td><td>Numeric lower bound (e.g. amounts &ge; 0)</td></tr>
+<tr><td><code>@IsIn([...])</code></td><td>Value must be one of a fixed set (e.g. task priority, credential category)</td></tr>
+<tr><td><code>@Matches(regex)</code></td><td>Must match a pattern &mdash; used to enforce <code>YYYY-MM-DD</code> date strings</td></tr>
+</table>
+
+<h2>Uniform error responses</h2>
+<div class="callout where"><span class="label">Where</span> <span class="file-path">backend/src/common/filters/http-exception.filter.ts</span></div>
+<pre>@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  catch(exception, host) {
+    const status = exception instanceof HttpException ? exception.getStatus() : 500;
+    const message = ... // extracted from the exception, or 'Internal server error'
+    response.status(status).json({ statusCode: status, message, path: request.url, timestamp });
+  }
+}</pre>
+<p>This is registered globally in <code>main.ts</code> with <code>app.useGlobalFilters(...)</code>, so <em>every</em> error &mdash; a thrown <code>UnauthorizedException</code>, a validation failure, an unexpected exception &mdash; comes back to the frontend in the exact same JSON shape.</p>
+
+<h2>How the frontend consumes errors</h2>
+<pre>// src/lib/api-client.ts
+async function parseError(res: Response): Promise&lt;never&gt; {
+  const body = await res.json();
+  const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+  throw new ApiError(res.status, message);
+}</pre>
+<p>Pages then branch on the status code, e.g. in <span class="file-path">login/page.tsx</span>: <code>if (error instanceof ApiError &amp;&amp; error.status === 401) &#123; ... &#125;</code> to show "Invalid credentials" specifically for a failed login, versus a generic message for anything else.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">15.</span>Notifications, Push, and Background Jobs</h1>
+
+<h2>Three related but distinct concepts</h2>
+<table>
+<tr><th>Concept</th><th>Module</th><th>What it is</th></tr>
+<tr><td>In-app notifications</td><td><code>NotificationsModule</code></td><td>Plain reminder records (title, date, message, read flag) shown in the notification bell / notifications page</td></tr>
+<tr><td>Push subscriptions</td><td><code>PushModule</code></td><td>The Web Push API subscription object a browser gives you when a user allows notifications &mdash; stored so the server can later push to that specific browser/device</td></tr>
+<tr><td>Background jobs</td><td><code>JobsModule</code></td><td>Endpoints meant to be triggered by an external scheduler (cron), which scan the database and actually send push notifications via the <code>web-push</code> library</td></tr>
+</table>
+
+<h2>How a push notification actually gets delivered</h2>
+<div class="callout how"><span class="label">How</span>
+<ol>
+<li>Browser calls <code>registration.pushManager.subscribe(...)</code> and gets back an <code>endpoint</code> + encryption <code>keys</code>.</li>
+<li>Frontend sends that to <code>POST /api/push/subscriptions</code>, stored in the <code>push_subscriptions</code> collection (one document per browser/device, upserted by <code>endpoint</code>).</li>
+<li>An external scheduler calls <code>POST /api/jobs/send-reminders</code> or <code>/water-check</code> with the <code>CRON_SECRET</code>.</li>
+<li><code>JobsService</code> queries MongoDB directly (today's notifications, or habits with a water-tracking target), and for each match calls <code>webpush.sendNotification(&#123;endpoint, keys&#125;, payload)</code> for every subscription belonging to that user.</li>
+<li>If a push fails with HTTP 404/410 (subscription no longer valid &mdash; e.g. the user uninstalled/blocked notifications), that subscription document is deleted automatically.</li>
+</ol>
+</div>
+
+<h2>VAPID keys</h2>
+<div class="callout what"><span class="label">What</span>
+VAPID (Voluntary Application Server Identification) keys are a public/private key pair that identifies your server to push services (Chrome, Firefox, etc.) when sending Web Push notifications.
+</div>
+<pre>// backend/src/modules/jobs/jobs.module.ts
+private ensureVapid() {
+  const publicKey = config.get('VAPID_PUBLIC_KEY');
+  const privateKey = config.get('VAPID_PRIVATE_KEY');
+  const subject = config.get('VAPID_SUBJECT');
+  if (!publicKey || !privateKey || !subject) {
+    console.warn('VAPID keys are not fully configured. Push notifications will not be sent.');
+    return false;
+  }
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+  return true;
+}</pre>
+<div class="warn"><span class="label">Current status</span>
+VAPID keys are <strong>not set</strong> in this project's environment (this was true even before the Firebase migration). Every job endpoint still runs successfully and returns <code>&#123;success:true, message:'VAPID keys not configured...'&#125;</code> &mdash; it just performs no actual sends. This is a pre-existing gap, not a bug introduced by the migration.
+</div>
+
+<h2>Why the cron logic lives in the backend, not Next.js, now</h2>
+<p>Before the migration, <span class="file-path">src/app/api/cron/send-reminders/route.ts</span> and <span class="file-path">water-check/route.ts</span> used the Firebase Admin SDK to loop over every Firestore user document. Those Next.js API routes were deleted, and the same logic (query &rarr; filter &rarr; push) was reimplemented in <code>JobsModule</code> against MongoDB &mdash; and simplified, since MongoDB lets you query "all notifications dated today across all users" in a single query, instead of looping over every user document and then a per-user sub-collection the way Firestore's nested structure required.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">16.</span>Important Security Decisions</h1>
+
+<table>
+<tr><th>Decision</th><th>Reasoning</th></tr>
+<tr><td>Refresh token in an httpOnly cookie, never in a JSON response or localStorage</td><td>Client-side JavaScript (and therefore XSS) can never read it</td></tr>
+<tr><td>Access token kept only in memory, not persisted</td><td>Limits the exposure window if it were ever exfiltrated; a reload requires a fresh <code>/auth/refresh</code></td></tr>
+<tr><td>Only <em>hashes</em> of refresh tokens and password-reset tokens are stored (SHA-256)</td><td>A database read/leak alone can't be used to forge a session or reset link &mdash; the raw value is required and only ever exists in the one-time email/response</td></tr>
+<tr><td>Password-reset tokens are single-use (<code>usedAt</code>) and short-lived (30 minutes, MongoDB TTL index)</td><td>Shrinks the window an intercepted reset link could be replayed</td></tr>
+<tr><td>Resetting a password revokes <em>all</em> of that user's refresh sessions</td><td>If the password was compromised, any existing logged-in session (attacker's or otherwise) is also cut off</td></tr>
+<tr><td>Forgot-password always responds <code>&#123;success:true&#125;</code></td><td>Prevents using the endpoint to enumerate which emails have accounts</td></tr>
+<tr><td>Passwords hashed with bcrypt, cost factor 12</td><td>Industry-standard slow hash, resistant to brute force even if the database leaks</td></tr>
+<tr><td><code>passwordHash</code> is <code>select: false</code> by default</td><td>Prevents accidental inclusion of the hash in any API response</td></tr>
+<tr><td>Every DB query is filtered by the JWT's <code>sub</code> (userId), never a client-supplied id</td><td>The core of the authorization model &mdash; see Section 11</td></tr>
+<tr><td>Global <code>ValidationPipe</code> with <code>forbidNonWhitelisted: true</code></td><td>Rejects requests carrying fields the DTO didn't declare, closing off a whole class of injection/override attempts</td></tr>
+<tr><td>CORS restricted to a single configured origin (<code>FRONTEND_URL</code>), not <code>*</code></td><td>Required for cookies to work cross-origin at all, and prevents arbitrary sites from calling the API with a user's credentials</td></tr>
+<tr><td>Refresh cookie scoped to <code>path: '/api/auth'</code></td><td>The browser will not attach it to unrelated requests (e.g. <code>/api/tasks</code>), reducing exposure</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">17.</span>Important Bugs Discovered and Fixed During Migration</h1>
+
+<p>These are real issues hit and fixed while building this backend and migrating the frontend to it &mdash; not hypothetical examples.</p>
+
+<h3>1. Backend wouldn't start &mdash; missing dependency</h3>
+<p><code>@nestjs/platform-express</code> (the HTTP driver NestJS needs) was not installed. Fixed by installing the version matching the other <code>@nestjs/*</code> packages (v11).</p>
+
+<h3>2. Stale incremental build cache masked a missing build</h3>
+<p><code>tsconfig.tsbuildinfo</code> persisted after <code>dist/</code> was deleted, causing TypeScript to believe the output was already up to date and skip re-emitting files entirely. Fixed by deleting the build-info file to force a clean rebuild.</p>
+
+<h3>3. Malformed <code>MONGODB_URI</code></h3>
+<p>The connection string in <code>.env</code> was, at different points, just a bare password fragment, and later a value with the <code>MONGODB_URI=</code> key itself accidentally missing from the line (a copy/paste artifact) &mdash; both silently produced a connection failure rather than an obviously-labelled error.</p>
+
+<h3>4. Root <code>tsconfig.json</code> was compiling the backend by accident</h3>
+<p>The frontend's TypeScript config had no <code>exclude</code> entry for <span class="file-path">backend/</span>, so running <code>tsc</code> at the repo root tried to type-check the NestJS backend using the <em>frontend's</em> compiler options (no decorator support), producing hundreds of unrelated errors. Fixed by adding <code>"backend"</code> to the root <code>exclude</code> array.</p>
+
+<h3>5. Signup appeared to fail, but the account was actually created</h3>
+<p><code>use-auth.tsx</code> tried to bootstrap a Firestore profile document for every newly authenticated user &mdash; including users authenticated through the new NestJS/JWT flow, who have no Firebase Auth session at all. Firestore's security rules require <code>request.auth != null</code>, so every one of those writes failed with <code>permission-denied</code>, and that thrown error bubbled up and was shown as "Sign-Up Failed" even though the MongoDB user was created successfully. Fixed by removing the Firestore bootstrap from the backend-authenticated code path.</p>
+
+<h3>6. Notes could never be created &mdash; a missing validator</h3>
+<p><code>NoteDto.content</code> had no <code>class-validator</code> decorator at all. Combined with the global <code>ValidationPipe</code>'s <code>forbidNonWhitelisted: true</code>, this meant the <code>content</code> field was treated as undeclared and every <code>POST</code>/<code>PATCH /notes</code> was rejected with <code>400 property content should not exist</code>. Found while migrating the Notes page; fixed with a single <code>@IsDefined()</code> decorator.</p>
+
+<h3>7. Destructive "replace-all" semantics on Habits/Planner, discovered the hard way</h3>
+<p><code>PATCH /api/habits</code> and <code>PUT /api/planner</code> do not merge &mdash; they delete everything and reinsert exactly what was sent. Early testing that sent a partial list silently deleted the rest of a user's habits. Documented and guarded against by always sending the <em>full</em> current array/object from the frontend (see the code comments in <span class="file-path">habits/page.tsx</span>).</p>
+
+<h3>8. Concurrent builds corrupted the shared backend</h3>
+<p>While multiple parts of the migration were being worked on in parallel, more than one process ran <code>nest build</code> at the same time. Because Nest's build wipes <code>dist/</code> before regenerating it (<code>deleteOutDir: true</code>), the concurrent wipes and writes corrupted the output and crashed the running server (<code>Cannot find module './modules/auth/auth.module'</code>). Fixed by serializing backend rebuild/restart to a single owner instead of letting it happen from multiple places at once.</p>
+
+<h3>9. A stale Firebase session bypassed the new login entirely</h3>
+<p>Firebase persists its auth session in the browser (IndexedDB) across reloads. A browser that had an old Firebase session (from earlier Guest-mode testing) would auto-restore that session and skip the new backend's login screen &mdash; but that session carried no NestJS JWT, so every save silently failed with <code>401</code>. It looked like "the app just isn't saving anything." Diagnosed by checking which auth path was actually active; resolved by logging out (or clearing site data) to force a real login through the new backend.</p>
+
+<h3>10. Resend rejected the email &mdash; twice, for two different reasons</h3>
+<p>First attempt: sending <em>to</em> a <code>@example.com</code> test address was rejected (<code>422</code>) &mdash; Resend's sandbox mode only allows sending to the account's own verified address. Second attempt (correct recipient): sending <em>from</em> <code>pranathisundara3@gmail.com</code> was rejected (<code>403 domain not verified</code>) &mdash; Resend requires the <em>from</em> domain to be owned and verified, and nobody can verify <code>gmail.com</code>. Fixed by setting <code>MAIL_FROM_ADDRESS</code> back to Resend's sandbox sender, <code>onboarding@resend.dev</code>.</p>
+
+<h3>11. <code>PASSWORD_ENCRYPTION_KEY</code> is defined but never implemented</h3>
+<p>Discovered while migrating the Password Manager feature: despite the field being named <code>encryptedData</code> and an encryption key existing in <code>.env.example</code>, no encryption code exists anywhere in the codebase (confirmed by searching the entire backend source for the variable &mdash; it is not referenced). Credential values are stored as plain strings in MongoDB; the UI only masks them visually with dots. This was <strong>not</strong> introduced by the migration &mdash; the same was true of the original Firestore implementation &mdash; but it is a real, currently-unaddressed gap (see Section 22).</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">18.</span>Environment Variables</h1>
+
+<div class="warn"><span class="label">Note</span> No real secret values are included below &mdash; only variable names and what they are for.</div>
+
+<h2>Backend &mdash; <span class="file-path">backend/.env</span></h2>
+<table>
+<tr><th>Variable</th><th>Used for</th></tr>
+<tr><td><code>NODE_ENV</code></td><td>Standard Node environment flag</td></tr>
+<tr><td><code>PORT</code></td><td>Port the NestJS server listens on (3001)</td></tr>
+<tr><td><code>MONGODB_URI</code></td><td>MongoDB Atlas connection string</td></tr>
+<tr><td><code>MONGODB_SERVER_SELECTION_TIMEOUT_MS</code></td><td>How long Mongoose waits to find a usable MongoDB server before failing</td></tr>
+<tr><td><code>MONGODB_CONNECT_TIMEOUT_MS</code></td><td>How long Mongoose waits for the initial connection</td></tr>
+<tr><td><code>FRONTEND_URL</code></td><td>Used for the CORS allow-list <em>and</em> to build password-reset links</td></tr>
+<tr><td><code>JWT_SECRET</code></td><td>Signs/verifies access tokens</td></tr>
+<tr><td><code>JWT_REFRESH_SECRET</code></td><td>Signs/verifies refresh tokens (deliberately different from <code>JWT_SECRET</code>)</td></tr>
+<tr><td><code>JWT_ACCESS_EXPIRES_IN</code></td><td>Access token lifetime (default <code>15m</code>)</td></tr>
+<tr><td><code>JWT_REFRESH_EXPIRES_IN</code></td><td>Refresh token lifetime (default <code>30d</code>)</td></tr>
+<tr><td><code>CRON_SECRET</code></td><td>Bearer secret required to call the <code>/api/jobs/*</code> endpoints</td></tr>
+<tr><td><code>PASSWORD_ENCRYPTION_KEY</code></td><td><strong>Defined but not used anywhere in the current code</strong> (see Section 17, bug 11)</td></tr>
+<tr><td><code>RESEND_API_KEY</code></td><td>Authenticates with the Resend email API for password-reset emails</td></tr>
+<tr><td><code>MAIL_FROM_ADDRESS</code></td><td>The "from" address/name used on password-reset emails</td></tr>
+<tr><td><code>VAPID_PUBLIC_KEY</code> / <code>VAPID_PRIVATE_KEY</code> / <code>VAPID_SUBJECT</code></td><td>Read by <code>JobsModule</code> for Web Push delivery. <strong>Not present in <span class="file-path">.env.example</span></strong> &mdash; a documentation gap worth fixing, though the code degrades gracefully when they're absent (Section 15)</td></tr>
+</table>
+
+<h2>Frontend &mdash; <span class="file-path">.env.local</span> (project root)</h2>
+<table>
+<tr><th>Variable</th><th>Used for</th></tr>
+<tr><td><code>NEXT_PUBLIC_BACKEND_URL</code></td><td>Base URL the frontend's <code>api-client.ts</code> calls (e.g. <code>http://localhost:3001/api</code>)</td></tr>
+<tr><td><code>NEXT_PUBLIC_VAPID_PUBLIC_KEY</code></td><td>Read in <span class="file-path">settings/page.tsx</span> when subscribing the browser to Web Push. Not currently set locally &mdash; push subscribe will show a "not configured" error until it is.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">19.</span>How to Run Frontend and Backend Locally</h1>
+
+<h2>Prerequisites</h2>
+<ul>
+<li>Node.js and npm</li>
+<li>A MongoDB Atlas connection string (or any reachable MongoDB instance)</li>
+<li>Backend <span class="file-path">.env</span> filled in based on <span class="file-path">backend/.env.example</span> (Section 18)</li>
+</ul>
+
+<h2>Backend</h2>
+<pre>cd backend
+npm install
+npm run build          # compiles TypeScript to dist/
+npm run start          # node dist/main.js — listens on http://localhost:3001</pre>
+<p class="small-note">Verify it's up: <code>curl http://localhost:3001/api/health/database</code> should return <code>&#123;"status":"ok", ...&#125;</code>.</p>
+<div class="callout how"><span class="label">A caveat found during development</span>
+<code>npm run start:dev</code> (<code>nest start --watch</code>) was occasionally flaky on this specific machine/folder &mdash; the watcher sometimes tried to launch <code>dist/main.js</code> before the compiler finished writing it, throwing <code>Cannot find module 'dist/main'</code>. If that happens: stop the process, delete <span class="file-path">tsconfig.tsbuildinfo</span> and <span class="file-path">dist/</span>, then re-run <code>npm run build &amp;&amp; npm run start</code>.
+</div>
+
+<h2>Frontend</h2>
+<pre>npm install
+npx next dev --port 9002 --webpack</pre>
+<div class="warn"><span class="label">Why not just <code>npm run dev</code></span>
+This project is on Next.js 16, which defaults to the Turbopack bundler, but the project also has a webpack-based PWA plugin (<code>@ducanh2912/next-pwa</code>) configured in <span class="file-path">next.config.mjs</span>. Running plain <code>next dev</code> fails outright because of that conflict. The <code>--webpack</code> flag forces the same bundler the production <code>build</code> script already uses.
+</div>
+<p>Once running, open <code>http://localhost:9002</code>.</p>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">20.</span>End-to-End Example: Creating a Task</h1>
+
+<p>This traces one real user action &mdash; adding a to-do item from the Dashboard &mdash; through every layer of the system.</p>
+
+<h3>Step 1 &mdash; User action</h3>
+<p>On <span class="file-path">src/app/dashboard/page.tsx</span>, the user types a task into the "Add a new task" dialog and clicks <strong>Add Task</strong>, which calls <code>addTodo()</code>.</p>
+
+<h3>Step 2 &mdash; Frontend calls the API client</h3>
+<pre>const created = await apiFetch&lt;ApiTask&gt;('/tasks', {
+  method: 'POST',
+  body: JSON.stringify({ text: newTodoText.trim(), completed: false, priority: newTodoPriority }),
+});</pre>
+
+<h3>Step 3 &mdash; api-client.ts builds the real HTTP request</h3>
+<pre>POST http://localhost:3001/api/tasks
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOi...        (the in-memory access token)
+Cookie: refresh_token=... (httpOnly, sent automatically by the browser)
+
+{"text":"Finish Q3 report","completed":false,"priority":"low"}</pre>
+
+<h3>Step 4 &mdash; NestJS receives the request</h3>
+<ol>
+<li><strong>CORS check</strong> (main.ts) &mdash; origin must match <code>FRONTEND_URL</code>.</li>
+<li><strong>Body/cookie parsing</strong> (<code>json()</code>, <code>cookieParser()</code> middleware).</li>
+<li><strong>Global ValidationPipe</strong> validates the body against <code>TaskDto</code>: <code>text</code> is a non-empty string &le;500 chars (present, OK), <code>completed</code> is a boolean (present, OK), <code>priority</code> is one of <code>high/medium/low</code> (present, OK). If anything failed here, the request would stop right now with <code>400 Bad Request</code> and never reach the controller.</li>
+<li><strong><code>JwtAuthGuard</code></strong> runs <code>JwtStrategy.validate()</code>: verifies the access token's signature against <code>JWT_SECRET</code> and checks it hasn't expired. If it's expired or invalid &rarr; <code>401</code> immediately.</li>
+<li><strong><code>TasksController.create()</code></strong> runs, with <code>@CurrentUser()</code> giving it <code>&#123;sub: '6aa...', email: '...'&#125;</code> and <code>@Body()</code> giving it the validated <code>TaskDto</code> instance.</li>
+</ol>
+
+<h3>Step 5 &mdash; Service writes to MongoDB</h3>
+<pre>create(userId: string, dto: TaskDto) {
+  return this.model.create({ ...dto, userId });
+}</pre>
+<p>Mongoose inserts a new document into the <code>tasks</code> collection: <code>&#123;_id: ObjectId(...), userId: ObjectId('6aa...'), text: 'Finish Q3 report', completed: false, priority: 'low', createdAt: ..., updatedAt: ..., __v: 0&#125;</code>.</p>
+
+<h3>Step 6 &mdash; Response</h3>
+<p>NestJS serializes the created Mongoose document to JSON and returns it with status <code>201 Created</code> (Nest's default for a <code>POST</code> handler with no explicit <code>@HttpCode</code>).</p>
+
+<h3>Step 7 &mdash; Frontend updates the UI</h3>
+<pre>const mapApiTask = (t: ApiTask): TodoItem => ({ id: t._id, text: t.text, completed: t.completed, priority: t.priority });
+setTodos([mapApiTask(created), ...todos]);   // new task appears at the top of the list</pre>
+
+<h3>What happens if the access token had expired at Step 4?</h3>
+<div class="callout how"><span class="label">How the retry path works</span>
+<ol>
+<li>Backend returns <code>401</code> before ever running <code>TasksController</code>.</li>
+<li><code>apiFetch</code> sees <code>res.status === 401 &amp;&amp; retry</code>, and calls <code>refreshSession()</code>, which <code>POST</code>s to <code>/api/auth/refresh</code> (the httpOnly cookie goes along automatically).</li>
+<li><code>AuthService.refresh()</code> verifies the refresh JWT, finds and revokes the matching row in <code>refresh_sessions</code>, and issues a brand-new access+refresh pair (rotation).</li>
+<li><code>apiFetch</code> retries the <em>original</em> <code>POST /tasks</code> request exactly once, now with the new access token, and the flow above continues normally.</li>
+<li>If the refresh itself fails (refresh token also expired/revoked), the user is effectively logged out and would need to sign in again.</li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">21.</span>What Was Removed From Firebase, and Why</h1>
+
+<h2>Files deleted</h2>
+<table>
+<tr><th>File / directory</th><th>Reason</th></tr>
+<tr><td><span class="file-path">src/lib/firebase.ts</span></td><td>Client SDK initialization (Auth, Firestore, Storage) &mdash; no longer needed once every feature moved to the NestJS API</td></tr>
+<tr><td><span class="file-path">src/lib/firebase-admin.ts</span></td><td>Server-side Admin SDK, used only by the deleted Next.js API routes below</td></tr>
+<tr><td><span class="file-path">src/lib/web-push.ts</span></td><td>VAPID/web-push initializer used only by the deleted cron routes; the same logic now lives inside <code>JobsModule</code></td></tr>
+<tr><td><span class="file-path">src/app/api/push/{subscribe,unsubscribe,send-test}/route.ts</span></td><td>Verified Firebase ID tokens and proxied to Firestore; replaced by the frontend calling the NestJS <code>PushModule</code> endpoints directly</td></tr>
+<tr><td><span class="file-path">src/app/api/cron/{send-reminders,water-check}/route.ts</span></td><td>Used Firebase Admin to scan Firestore; logic ported into <code>JobsModule</code> against MongoDB</td></tr>
+<tr><td><span class="file-path">src/app/login/actions.ts</span></td><td>Dead file, already unused before this migration (contained only a comment)</td></tr>
+<tr><td><span class="file-path">apphosting.yaml</span></td><td>Firebase App Hosting deployment config &mdash; no longer applicable</td></tr>
+<tr><td><span class="file-path">.idx/dev.nix</span></td><td>Firebase Studio (Project IDX) workspace config that auto-started Firebase Auth/Firestore emulators</td></tr>
+</table>
+
+<h2>npm packages removed</h2>
+<p><code>firebase</code>, <code>firebase-admin</code> &mdash; removed from the frontend's <span class="file-path">package.json</span>.</p>
+
+<h2>What deliberately stayed, and why</h2>
+<p>Nothing Firebase-related remains in the codebase. Two things that might look similar are not Firebase: profile photos are stored as base64 <code>data:</code> URIs directly in MongoDB (no external file storage was introduced), and push notifications use the vendor-neutral Web Push standard (<code>web-push</code> npm package, VAPID keys) rather than Firebase Cloud Messaging.</p>
+
+<h2>The overall motivation</h2>
+<ul>
+<li><strong>Full data ownership</strong> &mdash; all user data lives in a MongoDB database the project controls directly, not a third-party vendor's proprietary database.</li>
+<li><strong>One consistent backend</strong> instead of a split between client-side Firestore access, Firebase security rules, and a handful of server-side Next.js API routes using Firebase Admin.</li>
+<li><strong>Avoiding the exact class of bugs Firebase's split model caused</strong> during this project &mdash; e.g. bug #5 in Section 17, where a user could be validly authenticated by the new backend but still get rejected by Firestore's separate security-rule engine, which only trusts Firebase Auth sessions.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h1 class="section"><span class="num">22.</span>Important Limitations That Still Exist</h1>
+
+<table>
+<tr><th>Limitation</th><th>Detail</th></tr>
+<tr><td>Password Manager has no real encryption</td><td>Credential values are stored as plain strings in MongoDB (<code>encryptedData: Record&lt;string,string&gt;</code> is just a bag of unencrypted fields). <code>PASSWORD_ENCRYPTION_KEY</code> exists in <span class="file-path">.env.example</span> but is not implemented anywhere. The UI only visually masks values with dots.</td></tr>
+<tr><td>Push notifications require manual VAPID setup</td><td>Neither the backend nor frontend <code>.env</code> currently has real VAPID keys; the "Send Test Notification" button and the reminder/water-check jobs will report success but deliver nothing until keys are generated and set.</td></tr>
+<tr><td>Password-reset email delivery is sandboxed</td><td>Without a verified sending domain on Resend, real end users (anyone other than the developer's own verified Resend account email) cannot currently receive password-reset emails.</td></tr>
+<tr><td>Destructive replace-all endpoints are easy to misuse</td><td><code>PATCH /habits</code> and <code>PUT /planner</code> silently delete anything not included in the request. There is no partial-update variant, so any future client code must remember to always send the complete array/object.</td></tr>
+<tr><td>No account recovery beyond password reset</td><td>No 2FA, no backup codes, no "forgot username" flow, no email-change confirmation step (change-email takes effect immediately once the current password is verified).</td></tr>
+<tr><td>Guest accounts cannot be "upgraded"</td><td>There is no flow to convert a guest (passwordless) account into a real email/password account &mdash; if the session/cookie is lost, that guest's data becomes unreachable.</td></tr>
+<tr><td>No object/file storage</td><td>Profile photos are capped at ~1MB and stored inline as base64 inside the user document, which is simple but does not scale well and bloats document size/backup size.</td></tr>
+<tr><td>No rate limiting</td><td><code>login</code>, <code>register</code>, and <code>forgot-password</code> have no throttling, making them susceptible to brute-force or spam without an added rate-limiting layer.</td></tr>
+<tr><td>No automated test suite</td><td>All verification during the migration was done manually via <code>curl</code> scripts against a running backend, not unit or integration tests committed to the repo.</td></tr>
+<tr><td>VAPID env vars undocumented</td><td><code>VAPID_PUBLIC_KEY</code>/<code>VAPID_PRIVATE_KEY</code>/<code>VAPID_SUBJECT</code> are read by <code>JobsModule</code> but not listed in <span class="file-path">backend/.env.example</span>.</td></tr>
+</table>
+
+<p style="margin-top:40px; text-align:center; color:#888; font-size:8.5pt;">— End of document —</p>
+
+</body>
+</html>

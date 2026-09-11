@@ -4,12 +4,11 @@
 import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import type { Note } from '@/types';
-import { P_NOTES } from '@/lib/placeholder-data';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Search, LayoutGrid, List, Trash2, X, Save, Edit, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { format, formatISO, parseISO } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -18,10 +17,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api-client';
 
 type Layout = 'grid' | 'list';
+
+// Shape returned by the backend `/notes` endpoints (Mongo document with `_id`).
+type NoteApiResponse = {
+  _id: string;
+  title: string;
+  content: string | { text: string; completed: boolean }[];
+  type: 'text' | 'checklist';
+  createdAt: string;
+};
+
+function toNote(doc: NoteApiResponse): Note {
+  return { id: doc._id, title: doc.title, content: doc.content, type: doc.type, createdAt: doc.createdAt };
+}
 
 function ViewNoteDialog({ note, isOpen, onOpenChange }: { note: Note | null, isOpen: boolean, onOpenChange: (open: boolean) => void }) {
     if (!note) return null;
@@ -191,48 +202,56 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     setIsLoading(true);
-    const notesDocRef = doc(db, 'users', user.uid, 'data', 'notes');
-    const unsubscribe = onSnapshot(notesDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setNotes((docSnap.data() as { items: Note[] }).items || []);
-      } else {
-        // If data doesn't exist, set it with placeholder data
-        const initialNotes = P_NOTES;
-        setDoc(notesDocRef, { items: initialNotes });
-        setNotes(initialNotes);
-      }
-      setIsLoading(false);
-    });
-    return () => unsubscribe();
+    apiFetch<NoteApiResponse[]>('/notes')
+      .then((fetchedNotes) => {
+        if (!cancelled) setNotes(fetchedNotes.map(toNote));
+      })
+      .catch((err) => {
+        console.error('Failed to load notes:', err);
+        if (!cancelled) setNotes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [user]);
 
-  const saveNotes = async (updatedNotes: Note[]) => {
-    if (!user) return;
-    const notesDocRef = doc(db, 'users', user.uid, 'data', 'notes');
-    await setDoc(notesDocRef, { items: updatedNotes });
+  const handleSaveNote = async (newNoteData: Omit<Note, 'id' | 'createdAt'>) => {
+    try {
+      const createdNote = await apiFetch<NoteApiResponse>('/notes', {
+        method: 'POST',
+        body: JSON.stringify(newNoteData),
+      });
+      setNotes((prev) => [toNote(createdNote), ...prev]);
+      setIsAddingNote(false);
+    } catch (err) {
+      console.error('Failed to create note:', err);
+    }
   };
 
-  const handleSaveNote = (newNoteData: Omit<Note, 'id' | 'createdAt'>) => {
-    const newNote: Note = { id: `note-${Date.now()}`, createdAt: formatISO(new Date()), ...newNoteData, };
-    const updatedNotes = [newNote, ...notes];
-    setNotes(updatedNotes);
-    saveNotes(updatedNotes);
-    setIsAddingNote(false);
-  };
-  
-  const handleUpdateNote = (updatedNote: Note) => {
-    const updatedNotes = notes.map(n => n.id === updatedNote.id ? updatedNote : n);
-    setNotes(updatedNotes);
-    saveNotes(updatedNotes);
-    setEditingNoteId(null);
+  const handleUpdateNote = async (updatedNote: Note) => {
+    try {
+      const savedNote = await apiFetch<NoteApiResponse>(`/notes/${updatedNote.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: updatedNote.title, content: updatedNote.content, type: updatedNote.type }),
+      });
+      setNotes((prev) => prev.map(n => n.id === updatedNote.id ? toNote(savedNote) : n));
+      setEditingNoteId(null);
+    } catch (err) {
+      console.error('Failed to update note:', err);
+    }
   };
 
-  const handleDeleteNote = (noteId: string) => {
-    const updatedNotes = notes.filter(note => note.id !== noteId);
-    setNotes(updatedNotes);
-    saveNotes(updatedNotes);
-    setEditingNoteId(null);
+  const handleDeleteNote = async (noteId: string) => {
+    try {
+      await apiFetch(`/notes/${noteId}`, { method: 'DELETE' });
+      setNotes((prev) => prev.filter(note => note.id !== noteId));
+      setEditingNoteId(null);
+    } catch (err) {
+      console.error('Failed to delete note:', err);
+    }
   };
   
   const handleCancelNewNote = () => setIsAddingNote(false);

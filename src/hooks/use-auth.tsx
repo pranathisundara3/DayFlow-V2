@@ -1,87 +1,109 @@
 
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import React, { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
-import { P_HABITS, P_NOTES, P_NOTIFICATIONS, P_PASSWORDS, P_TODO_ITEMS, P_TRANSACTIONS } from '@/lib/placeholder-data';
+import * as api from '@/lib/api-client';
+
+export interface AppUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  isAnonymous: boolean;
+}
 
 interface AuthContextType {
-  user: User | null;
+  user: AppUser | null;
   loading: boolean;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string, username: string) => Promise<void>;
+  signInAsGuest: () => Promise<void>;
+  signOutUser: () => Promise<void>;
+  // Re-fetches the current user from the backend (e.g. after a profile edit)
+  // so components reading `user` elsewhere (like the header) update without
+  // requiring a full re-login.
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  signInWithEmail: async () => {},
+  signUpWithEmail: async () => {},
+  signInAsGuest: async () => {},
+  signOutUser: async () => {},
+  refreshUser: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
 
-const initializeNewUserData = async (userId: string) => {
-    const defaultData: { [key: string]: any } = {
-        todos: P_TODO_ITEMS,
-        transactions: P_TRANSACTIONS,
-        habits: P_HABITS,
-        notes: P_NOTES,
-        passwords: P_PASSWORDS,
-        notifications: P_NOTIFICATIONS,
-        budget: 5000000,
-        settings: { gymTracking: true, theme: 'default-green' },
-        weeklySchedule: {},
-        ai_chats: [],
-    };
-    
-    for (const [key, data] of Object.entries(defaultData)) {
-        await setDoc(doc(db, 'users', userId, 'data', key), { items: data });
-    }
+function fromApiUser(apiUser: api.ApiUser): AppUser {
+  return {
+    uid: apiUser.id,
+    email: apiUser.email,
+    displayName: apiUser.username,
+    photoURL: apiUser.photoUrl,
+    isAnonymous: apiUser.isAnonymous,
+  };
+}
+
+async function loadCurrentUser(): Promise<AppUser> {
+  const apiUser = await api.fetchCurrentUser();
+  return fromApiUser(apiUser);
 }
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Restore a session on load via the httpOnly refresh-token cookie.
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      try {
-        if (firebaseUser) {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
-          if (!userDoc.exists()) {
-            // Create user profile document and default data for new users
-            const username = firebaseUser.isAnonymous
-              ? 'Guest User'
-              : firebaseUser.displayName 
-                || (firebaseUser.email ? firebaseUser.email.split('@')[0] : (firebaseUser.phoneNumber || 'User'));
-            
-            await setDoc(userDocRef, {
-              email: firebaseUser.email || null,
-              phoneNumber: firebaseUser.phoneNumber || null,
-              username: username,
-              createdAt: new Date().toISOString(),
-              isAnonymous: firebaseUser.isAnonymous,
-              photoURL: firebaseUser.photoURL || null,
-            });
-            await initializeNewUserData(firebaseUser.uid);
-          }
-          setUser(firebaseUser);
-        } else {
-          setUser(null);
+    let cancelled = false;
+    (async () => {
+      const token = await api.refreshSession();
+      if (token) {
+        try {
+          const appUser = await loadCurrentUser();
+          if (!cancelled) setUser(appUser);
+        } catch (error) {
+          console.error('Failed to restore session:', error);
         }
-      } catch (error) {
-        console.error("Error during user initialization:", error);
-        setUser(null);
-      } finally {
-        setLoading(false);
       }
-    });
-
-    return () => unsubscribe();
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  const value = { user, loading };
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    await api.login(email, password);
+    setUser(await loadCurrentUser());
+  }, []);
+
+  const signUpWithEmail = useCallback(async (email: string, password: string, username: string) => {
+    await api.register(email, password, username);
+    setUser(await loadCurrentUser());
+  }, []);
+
+  const signInAsGuest = useCallback(async () => {
+    await api.guestLogin();
+    setUser(await loadCurrentUser());
+  }, []);
+
+  const signOutUser = useCallback(async () => {
+    await api.logout();
+    setUser(null);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    try {
+      setUser(await loadCurrentUser());
+    } catch (error) {
+      console.error('Failed to refresh user:', error);
+    }
+  }, []);
+
+  const value: AuthContextType = { user, loading, signInWithEmail, signUpWithEmail, signInAsGuest, signOutUser, refreshUser };
 
   return (
     <AuthContext.Provider value={value}>

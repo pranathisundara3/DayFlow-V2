@@ -14,8 +14,7 @@ import { PlusCircle, Trash, Loader2, Info } from 'lucide-react';
 import type { PlannerItem } from '@/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, onSnapshot, getDoc, setDoc } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api-client';
 
 
 const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -39,26 +38,29 @@ export default function PlannerPage() {
 
     useEffect(() => {
         if (!user) return;
+        let cancelled = false;
         setIsLoading(true);
-        const scheduleDocRef = doc(db, 'users', user.uid, 'data', 'weeklySchedule');
-        const unsubscribe = onSnapshot(scheduleDocRef, async (docSnap) => {
-            if (docSnap.exists()) {
-                setWeeklySchedule((docSnap.data() as {items: Record<string, PlannerItem[]>}).items || {});
-            } else {
-                const initialSchedule: Record<string, PlannerItem[]> = {};
-                daysOfWeek.forEach(day => { initialSchedule[day] = [] });
-                await setDoc(scheduleDocRef, { items: initialSchedule });
-                setWeeklySchedule(initialSchedule);
+        (async () => {
+            try {
+                const data = await apiFetch<{ days: Record<string, PlannerItem[]> }>('/planner');
+                if (!cancelled) setWeeklySchedule(data.days || {});
+            } catch (error) {
+                console.error('Failed to load schedule:', error);
+            } finally {
+                if (!cancelled) setIsLoading(false);
             }
-            setIsLoading(false);
-        });
-        return () => unsubscribe();
+        })();
+        return () => { cancelled = true; };
     }, [user]);
 
     const saveSchedule = async (newSchedule: Record<string, PlannerItem[]>) => {
         if (!user) return;
         setWeeklySchedule(newSchedule);
-        await setDoc(doc(db, 'users', user.uid, 'data', 'weeklySchedule'), { items: newSchedule });
+        try {
+            await apiFetch('/planner', { method: 'PUT', body: JSON.stringify({ days: newSchedule }) });
+        } catch (error) {
+            console.error('Failed to save schedule:', error);
+        }
     };
     
     const handleAddAdhocItem = () => {

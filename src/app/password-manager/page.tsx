@@ -4,7 +4,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import type { Credential } from '@/types';
-import { P_PASSWORDS } from '@/lib/placeholder-data';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -15,8 +14,31 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { KeySquare, Loader2, ShieldCheck, Landmark, Globe, Users, PlusSquare, Eye, EyeOff, Copy, Trash2, Edit, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { apiFetch, ApiError } from '@/lib/api-client';
+import { useToast } from '@/hooks/use-toast';
+
+// Shape of a credential document as returned by the backend
+// (`backend/src/modules/credentials/credentials.module.ts`). The
+// `encryptedData` bag holds whatever category-specific fields the UI
+// collected (username/password/website, or the banking fields) — the
+// backend does not encrypt it, it is just a generic string map.
+interface ApiCredential {
+  _id: string;
+  name: string;
+  category: 'Website' | 'Banking' | 'Social Media' | 'Other';
+  lastUpdated: string;
+  encryptedData: Record<string, string>;
+}
+
+function apiToCredential(doc: ApiCredential): Credential {
+  return {
+    id: doc._id,
+    name: doc.name,
+    category: doc.category,
+    lastUpdated: doc.lastUpdated ? doc.lastUpdated.slice(0, 10) : '',
+    ...doc.encryptedData,
+  } as Credential;
+}
 
 
 function SensitiveInput({ id, fieldName, value, onToggle, onCopy, isVisible }: { id: string; fieldName: string; value: string | number; onToggle: (id: string, fieldName: string) => void; onCopy: (value: string | number, fieldName: string) => void; isVisible: boolean; }) {
@@ -105,6 +127,7 @@ function CredentialDialog({ isOpen, onOpenChange, onSave, credential }: { isOpen
 
 export default function PasswordManagerPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -114,43 +137,60 @@ export default function PasswordManagerPage() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     setIsLoading(true);
-    const credsDocRef = doc(db, 'users', user.uid, 'data', 'passwords');
-    const unsubscribe = onSnapshot(credsDocRef, async (docSnap) => {
-      if (docSnap.exists()) {
-        setCredentials((docSnap.data() as {items: Credential[]}).items || []);
-      } else {
-        await setDoc(credsDocRef, { items: P_PASSWORDS });
-        setCredentials(P_PASSWORDS);
-      }
-      setIsLoading(false);
+    apiFetch<ApiCredential[]>('/credentials')
+      .then((docs) => {
+        if (cancelled) return;
+        setCredentials(docs.map(apiToCredential));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to load credentials.' });
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [user, toast]);
+
+  const handleSaveCredential = async (data: Omit<Credential, 'id' | 'lastUpdated'>, id?: string) => {
+    const { name, category, ...fields } = data;
+    const encryptedData: Record<string, string> = {};
+    Object.entries(fields).forEach(([key, value]) => {
+      if (value !== undefined) encryptedData[key] = String(value);
     });
-    return () => unsubscribe();
-  }, [user]);
-  
-  const saveCredentials = async (updatedCredentials: Credential[]) => {
-    if (!user) return;
-    await setDoc(doc(db, 'users', user.uid, 'data', 'passwords'), { items: updatedCredentials });
+    const lastUpdated = new Date().toISOString().split('T')[0];
+    try {
+      if (id) {
+        const updated = await apiFetch<ApiCredential>(`/credentials/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name, category, lastUpdated, encryptedData }),
+        });
+        setCredentials(prev => prev.map(c => c.id === id ? apiToCredential(updated) : c));
+      } else {
+        const created = await apiFetch<ApiCredential>('/credentials', {
+          method: 'POST',
+          body: JSON.stringify({ name, category, lastUpdated, encryptedData }),
+        });
+        setCredentials(prev => [apiToCredential(created), ...prev]);
+      }
+      setIsFormOpen(false);
+      setEditingCredential(null);
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to save credential.' });
+    }
   };
 
-  const handleSaveCredential = (data: Omit<Credential, 'id' | 'lastUpdated'>, id?: string) => {
-    let updatedCredentials;
-    if (id) {
-      updatedCredentials = credentials.map(c => c.id === id ? { ...c, ...data, lastUpdated: new Date().toISOString().split('T')[0] } : c);
-    } else {
-      const newCredential: Credential = { id: `cred-${Date.now()}`, ...data, lastUpdated: new Date().toISOString().split('T')[0] };
-      updatedCredentials = [newCredential, ...credentials];
+  const handleDeleteCredential = async (id: string) => {
+    const previous = credentials;
+    setCredentials(prev => prev.filter(c => c.id !== id));
+    try {
+      await apiFetch(`/credentials/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      setCredentials(previous);
+      toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to delete credential.' });
     }
-    setCredentials(updatedCredentials);
-    saveCredentials(updatedCredentials);
-    setIsFormOpen(false);
-    setEditingCredential(null);
-  };
-  
-  const handleDeleteCredential = (id: string) => {
-    const updatedCredentials = credentials.filter(c => c.id !== id);
-    setCredentials(updatedCredentials);
-    saveCredentials(updatedCredentials);
   };
 
   const handleToggleVisibility = (id: string, fieldName: string) => {

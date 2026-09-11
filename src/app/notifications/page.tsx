@@ -4,7 +4,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import type { Notification } from '@/types';
-import { P_NOTIFICATIONS } from '@/lib/placeholder-data';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { BellRing, Check, Mail, Trash2, Loader2 } from 'lucide-react';
@@ -12,8 +11,25 @@ import { format, parseISO, isToday, isFuture, isPast } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api-client';
+
+type ApiNotification = {
+  _id: string;
+  title: string;
+  date: string;
+  message: string;
+  read: boolean;
+};
+
+function toNotification(n: ApiNotification): Notification {
+  return {
+    id: n._id,
+    title: n.title,
+    date: n.date.slice(0, 10),
+    message: n.message,
+    read: n.read,
+  };
+}
 
 function NotificationCard({ notification, onToggleRead, onDelete }: { 
     notification: Notification, 
@@ -45,41 +61,54 @@ export default function NotificationsPage() {
   useEffect(() => {
     if (!user) return;
     setIsLoading(true);
-    const notificationsDocRef = doc(db, 'users', user.uid, 'data', 'notifications');
-    const unsubscribe = onSnapshot(notificationsDocRef, async (docSnap) => {
-        if (docSnap.exists()) {
-            setNotifications((docSnap.data() as { items: Notification[] }).items || []);
-        } else {
-            const initialData = P_NOTIFICATIONS;
-            await setDoc(notificationsDocRef, { items: initialData });
-            setNotifications(initialData);
-        }
-        setIsLoading(false);
-    });
-    return () => unsubscribe();
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch<ApiNotification[]>('/notifications');
+        if (!cancelled) setNotifications(data.map(toNotification));
+      } catch (error) {
+        console.error('Failed to load notifications:', error);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [user]);
 
-  const saveNotifications = async (updatedNotifications: Notification[]) => {
-      if (!user) return;
-      await setDoc(doc(db, 'users', user.uid, 'data', 'notifications'), { items: updatedNotifications });
+  const toggleReadStatus = async (id: string) => {
+    const target = notifications.find(n => n.id === id);
+    if (!target) return;
+    const nextRead = !target.read;
+    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: nextRead } : n)));
+    try {
+      await apiFetch(`/notifications/${id}`, { method: 'PATCH', body: JSON.stringify({ read: nextRead }) });
+    } catch (error) {
+      console.error('Failed to update notification:', error);
+      setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: !nextRead } : n)));
+    }
   };
 
-  const toggleReadStatus = (id: string) => {
-    const updated = notifications.map(n => (n.id === id ? { ...n, read: !n.read } : n));
-    setNotifications(updated);
-    saveNotifications(updated);
-  };
-  
-  const markAllAsRead = () => {
-    const updated = notifications.map(n => ({...n, read: true}));
-    setNotifications(updated);
-    saveNotifications(updated);
+  const markAllAsRead = async () => {
+    const previous = notifications;
+    const toMark = notifications.filter(n => !n.read);
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    try {
+      await Promise.all(toMark.map(n => apiFetch(`/notifications/${n.id}`, { method: 'PATCH', body: JSON.stringify({ read: true }) })));
+    } catch (error) {
+      console.error('Failed to mark all as read:', error);
+      setNotifications(previous);
+    }
   }
 
-  const handleDeleteNotification = (id: string) => {
-    const updated = notifications.filter(n => n.id !== id);
-    setNotifications(updated);
-    saveNotifications(updated);
+  const handleDeleteNotification = async (id: string) => {
+    const previous = notifications;
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    try {
+      await apiFetch(`/notifications/${id}`, { method: 'DELETE' });
+    } catch (error) {
+      console.error('Failed to delete notification:', error);
+      setNotifications(previous);
+    }
   };
 
   const { todays, future, past } = useMemo(() => {

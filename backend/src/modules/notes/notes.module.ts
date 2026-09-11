@@ -1,0 +1,14 @@
+import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { InjectModel, MongooseModule } from '@nestjs/mongoose';
+import { IsDefined, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Model, Types } from 'mongoose';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+
+@Schema({ timestamps: true, collection: 'notes' }) class Note { @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true }) userId!: Types.ObjectId; @Prop({ required: true, maxlength: 200 }) title!: string; @Prop({ type: Object, required: true }) content!: unknown; @Prop({ enum: ['text', 'checklist'], required: true }) type!: string; @Prop({ required: true, default: Date.now }) createdAt!: Date; }
+const NoteSchema = SchemaFactory.createForClass(Note); NoteSchema.index({ userId: 1, createdAt: -1 });
+class NoteDto { @IsString() @MaxLength(200) title!: string; @IsDefined() content!: unknown; @IsIn(['text', 'checklist']) type!: string; @IsOptional() @IsString() createdAt?: string; }
+@Injectable() class NotesService { constructor(@InjectModel(Note.name) private readonly model: Model<Note>) {} list(userId: string) { return this.model.find({ userId }).sort({ createdAt: -1 }).lean().exec(); } create(userId: string, dto: NoteDto) { return this.model.create({ ...dto, userId, createdAt: dto.createdAt ? new Date(dto.createdAt) : new Date() }); } update(userId: string, id: string, dto: Partial<NoteDto>) { const data = dto.createdAt ? { ...dto, createdAt: new Date(dto.createdAt) } : dto; return this.model.findOneAndUpdate({ _id: id, userId }, data, { new: true, runValidators: true }).exec(); } remove(userId: string, id: string) { return this.model.deleteOne({ _id: id, userId }).exec(); } }
+@Controller('notes') @UseGuards(JwtAuthGuard) class NotesController { constructor(private readonly service: NotesService) {} @Get() list(@CurrentUser() user: { sub: string }) { return this.service.list(user.sub); } @Post() create(@CurrentUser() user: { sub: string }, @Body() dto: NoteDto) { return this.service.create(user.sub, dto); } @Patch(':id') update(@CurrentUser() user: { sub: string }, @Param('id') id: string, @Body() dto: Partial<NoteDto>) { return this.service.update(user.sub, id, dto); } @Delete(':id') remove(@CurrentUser() user: { sub: string }, @Param('id') id: string) { return this.service.remove(user.sub, id); } }
+@Module({ imports: [MongooseModule.forFeature([{ name: Note.name, schema: NoteSchema }])], controllers: [NotesController], providers: [NotesService] }) export class NotesModule {}

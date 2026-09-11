@@ -41,10 +41,26 @@ import { Textarea } from '@/components/ui/textarea';
 import { format, parseISO, isSameDay, isFuture } from 'date-fns';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Notification } from '@/types';
-import { useAuth } from '@/hooks/use-auth';
-import { signOut, User } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
-import { collection, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { useAuth, type AppUser } from '@/hooks/use-auth';
+import { apiFetch } from '@/lib/api-client';
+
+type ApiNotification = {
+  _id: string;
+  title: string;
+  date: string;
+  message: string;
+  read: boolean;
+};
+
+function toNotification(n: ApiNotification): Notification {
+  return {
+    id: n._id,
+    title: n.title,
+    date: n.date.slice(0, 10),
+    message: n.message,
+    read: n.read,
+  };
+}
 
 
 const navItems = [
@@ -107,7 +123,7 @@ function ThemeToggle() {
   );
 }
 
-function UserNav({ user, username, photoURL, onLogout }: { user: User, username: string | null, photoURL: string | null, onLogout: () => void }) {
+function UserNav({ user, username, photoURL, onLogout }: { user: AppUser, username: string | null, photoURL: string | null, onLogout: () => void }) {
   const router = useRouter();
   
   if (!user) return <Skeleton className="h-8 w-8 rounded-full" />;
@@ -175,15 +191,23 @@ function NotificationBell() {
 
   useEffect(() => {
     if (!user) return;
-    
-    const notificationsDocRef = doc(db, 'users', user.uid, 'data', 'notifications');
-    const unsubscribe = onSnapshot(notificationsDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            setNotifications((docSnap.data() as {items: Notification[]}).items || []);
-        }
-    });
 
-    return () => unsubscribe();
+    let cancelled = false;
+    const fetchNotifications = async () => {
+      try {
+        const data = await apiFetch<ApiNotification[]>('/notifications');
+        if (!cancelled) setNotifications(data.map(toNotification));
+      } catch (error) {
+        console.error('Failed to load notifications:', error);
+      }
+    };
+
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [user]);
 
   const todaysUnreadNotifications = notifications.filter(n => {
@@ -259,21 +283,15 @@ function HeaderCalendar() {
         return;
     }
 
-    const newReminder: Notification = {
-        id: `notif-${Date.now()}`,
-        title,
-        message,
-        date: format(date, 'yyyy-MM-dd'),
-        read: false,
-    };
-    
     try {
-        const notificationsDocRef = doc(db, 'users', user.uid, 'data', 'notifications');
-        const docSnap = await getDoc(notificationsDocRef);
-        const currentNotifications = docSnap.exists() ? (docSnap.data() as {items: Notification[]}).items : [];
-        const updatedNotifications = [newReminder, ...currentNotifications];
-        
-        await setDoc(notificationsDocRef, { items: updatedNotifications });
+        await apiFetch('/notifications', {
+          method: 'POST',
+          body: JSON.stringify({
+            title,
+            message,
+            date: format(date, 'yyyy-MM-dd'),
+          }),
+        });
 
         setDate(undefined);
         setTitle('');
@@ -326,33 +344,29 @@ function HeaderCalendar() {
 }
 
 /**
- * This component listens to the user's theme settings in Firestore and applies
- * the corresponding CSS class to the HTML element.
+ * This component reads the user's theme preference from the backend and
+ * applies the corresponding CSS class to the HTML element.
  */
 function ThemeController() {
   const { user } = useAuth();
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
 
-    const settingsDocRef = doc(db, 'users', user.uid, 'data', 'settings');
-    const unsubscribe = onSnapshot(settingsDocRef, (docSnap) => {
-      // List of all possible theme classes
+    apiFetch<{ theme?: string }>('/users/me').then((data) => {
+      if (cancelled) return;
       const themeClasses = ['theme-indigo', 'theme-charcoal-yellow'];
-      
-      // Clear any previous theme class to avoid conflicts
       document.documentElement.classList.remove(...themeClasses);
-
-      if (docSnap.exists()) {
-        const settings = (docSnap.data() as {items: any}).items;
-        const theme = settings.theme || 'default-green';
-        if (theme !== 'default-green') {
-           document.documentElement.classList.add(`theme-${theme}`);
-        }
+      const theme = data.theme || 'default-green';
+      if (theme !== 'default-green') {
+        document.documentElement.classList.add(`theme-${theme}`);
       }
+    }).catch((err) => {
+      console.error('Failed to load theme:', err);
     });
 
-    return () => unsubscribe();
+    return () => { cancelled = true; };
   }, [user]);
 
   return null; // This component does not render anything
@@ -360,7 +374,7 @@ function ThemeController() {
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, loading, signOutUser } = useAuth();
   const [username, setUsername] = useState<string | null>(null);
   const [photoURL, setPhotoURL] = useState<string | null>(null);
 
@@ -370,22 +384,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace('/login');
       return;
     }
-    
-    const userDocRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            setUsername(data.username);
-            setPhotoURL(data.photoURL);
-        }
-    });
 
-    return () => unsubscribe();
-
+    // `user.displayName`/`photoURL` are already populated by useAuth() (from the backend's `/users/me`).
+    setUsername(user.isAnonymous ? 'Guest User' : user.displayName);
+    setPhotoURL(user.photoURL);
   }, [user, loading, router]);
 
   const handleLogout = async () => {
-    await signOut(auth);
+    await signOutUser();
     router.push('/login');
   };
   

@@ -3,7 +3,6 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { P_TRANSACTIONS } from '@/lib/placeholder-data';
 import type { Transaction } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -11,12 +10,12 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { format, parseISO, formatISO, startOfMonth } from 'date-fns';
+import { format, parseISO, startOfMonth } from 'date-fns';
 import { Label } from '@/components/ui/label';
 import { PiggyBank, Loader2, TrendingUp, TrendingDown, Save, PlusCircle, Trash2, Plane, Shirt, UtensilsCrossed, ShoppingBag, Bolt, HeartPulse, Ticket, MoreHorizontal, Salad, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { apiFetch, ApiError } from '@/lib/api-client';
+import { useToast } from '@/hooks/use-toast';
 
 const TRANSACTION_CATEGORIES = ["Food", "Travel", "Shopping", "Utilities", "Health", "Entertainment", "Income", "Groceries", "Social", "Clothing", "Other"];
 const categoryDetails: Record<string, { icon: React.ElementType, color: string }> = {
@@ -24,23 +23,29 @@ const categoryDetails: Record<string, { icon: React.ElementType, color: string }
 };
 const formatCurrency = (amountInCents: number) => `${(amountInCents / 100).toFixed(2)}`;
 
-async function getUserData<T>(userId: string, collection: string, placeholder: T): Promise<T> {
-    const docRef = doc(db, 'users', userId, 'data', collection);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-        return (docSnap.data() as { items: T }).items;
-    } else {
-        await setUserData(userId, collection, placeholder);
-        return placeholder;
-    }
+// Shape of documents returned by the backend (`backend/src/modules/expenses/expenses.module.ts`).
+// Amounts are stored server-side as integer cents; the frontend's `Transaction.amount` /
+// `monthlyBudget` are also plain cent counts, so the two line up without extra scaling.
+interface ApiTransaction {
+    _id: string;
+    date: string;
+    description: string;
+    category: string;
+    amountCents: number;
+    type: 'income' | 'expense';
 }
-async function setUserData<T>(userId: string, collection: string, data: T) {
-    const docRef = doc(db, 'users', userId, 'data', collection);
-    await setDoc(docRef, { items: data });
+interface ApiBudget {
+    _id: string;
+    amountCents: number;
+}
+
+function apiToTransaction(doc: ApiTransaction): Transaction {
+    return { id: doc._id, date: doc.date, description: doc.description, category: doc.category, amount: doc.amountCents, type: doc.type };
 }
 
 export default function ExpensesPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [monthlyBudget, setMonthlyBudget] = useState(5000000);
   const [isLoading, setIsLoading] = useState(true);
@@ -48,22 +53,26 @@ export default function ExpensesPage() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     setIsLoading(true);
-    
-    const unsubTransactions = onSnapshot(doc(db, 'users', user.uid, 'data', 'transactions'), (docSnap) => {
-        if (docSnap.exists()) setTransactions((docSnap.data() as { items: Transaction[] }).items);
-        else getUserData(user.uid, 'transactions', P_TRANSACTIONS).then(setTransactions);
+
+    Promise.all([
+        apiFetch<ApiTransaction[]>('/expenses/transactions'),
+        apiFetch<ApiBudget>('/expenses/budget'),
+    ]).then(([txnDocs, budgetDoc]) => {
+        if (cancelled) return;
+        setTransactions(txnDocs.map(apiToTransaction));
+        setMonthlyBudget(budgetDoc.amountCents);
+        setBudgetInput((budgetDoc.amountCents / 100).toFixed(2));
+    }).catch((err) => {
+        if (cancelled) return;
+        toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to load financial data.' });
+    }).finally(() => {
+        if (!cancelled) setIsLoading(false);
     });
 
-    const unsubBudget = onSnapshot(doc(db, 'users', user.uid, 'data', 'budget'), (docSnap) => {
-        const budget = docSnap.exists() ? (docSnap.data() as { items: number }).items : 5000000;
-        setMonthlyBudget(budget);
-        setBudgetInput((budget / 100).toFixed(2));
-    });
-    
-    setIsLoading(false);
-    return () => { unsubTransactions(); unsubBudget(); };
-  }, [user]);
+    return () => { cancelled = true; };
+  }, [user, toast]);
 
   const { totalIncome, totalExpenses, remainingBudget, budgetProgress, monthlyExpenses } = useMemo(() => {
     const income = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
@@ -74,7 +83,7 @@ export default function ExpensesPage() {
     const progress = monthlyBudget > 0 ? Math.max(0, Math.min(100, (currentMonthExpenses / monthlyBudget) * 100)) : 0;
     return { totalIncome: income, totalExpenses: expenses, remainingBudget: remaining, budgetProgress: progress, monthlyExpenses: currentMonthExpenses };
   }, [transactions, monthlyBudget]);
-  
+
    const groupedTransactions = useMemo(() => {
     return [...transactions].sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime())
       .reduce((acc, txn) => {
@@ -85,27 +94,45 @@ export default function ExpensesPage() {
       }, {} as Record<string, Transaction[]>);
   }, [transactions]);
 
-  const handleSetBudget = () => {
+  const handleSetBudget = async () => {
     if (!user) return;
     const budgetValue = parseFloat(budgetInput);
     if (isNaN(budgetValue) || budgetValue < 0) return;
     const budgetInCents = Math.round(budgetValue * 100);
+    const previous = monthlyBudget;
     setMonthlyBudget(budgetInCents);
-    setUserData(user.uid, 'budget', budgetInCents);
+    try {
+        await apiFetch<ApiBudget>('/expenses/budget', { method: 'PATCH', body: JSON.stringify({ amountCents: budgetInCents }) });
+    } catch (err) {
+        setMonthlyBudget(previous);
+        setBudgetInput((previous / 100).toFixed(2));
+        toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to update budget.' });
+    }
   };
-  
-  const handleDeleteTransaction = (id: string) => {
+
+  const handleDeleteTransaction = async (id: string) => {
     if (!user) return;
-    const updatedTransactions = transactions.filter(t => t.id !== id);
-    setTransactions(updatedTransactions);
-    setUserData(user.uid, 'transactions', updatedTransactions);
+    const previous = transactions;
+    setTransactions(prev => prev.filter(t => t.id !== id));
+    try {
+        await apiFetch(`/expenses/transactions/${id}`, { method: 'DELETE' });
+    } catch (err) {
+        setTransactions(previous);
+        toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to delete transaction.' });
+    }
   };
-  
-  const handleAddTransaction = (newTxn: Transaction) => {
+
+  const handleAddTransaction = async (newTxn: { date: string; description: string; category: string; type: 'income' | 'expense'; amountCents: number }) => {
     if (!user) return;
-    const updatedTransactions = [newTxn, ...transactions];
-    setTransactions(updatedTransactions);
-    setUserData(user.uid, 'transactions', updatedTransactions);
+    try {
+        const created = await apiFetch<ApiTransaction>('/expenses/transactions', {
+            method: 'POST',
+            body: JSON.stringify(newTxn),
+        });
+        setTransactions(prev => [apiToTransaction(created), ...prev]);
+    } catch (err) {
+        toast({ variant: 'destructive', title: 'Error', description: err instanceof ApiError ? err.message : 'Failed to add transaction.' });
+    }
   }
 
   if (isLoading) {
@@ -120,7 +147,7 @@ export default function ExpensesPage() {
 
   return (
     <AppLayout>
-      <div className="space-y-4">
+      <div className="space-y-4 pb-24">
         <div className="grid grid-cols-2 gap-4">
             <StatCard title="Total Income" amount={totalIncome} icon={TrendingUp} variant="income" />
             <StatCard title="Total Spent" amount={totalExpenses} icon={TrendingDown} variant="expense" />
@@ -188,7 +215,7 @@ function StatCard({ title, amount, icon: Icon, variant }: { title: string, amoun
     )
 }
 
-function TransactionDialog({ children, onSave }: { children: React.ReactNode, onSave: (transaction: Transaction) => void }) {
+function TransactionDialog({ children, onSave }: { children: React.ReactNode, onSave: (transaction: { date: string; description: string; category: string; type: 'income' | 'expense'; amountCents: number }) => void }) {
     const [isOpen, setIsOpen] = useState(false);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -200,11 +227,10 @@ function TransactionDialog({ children, onSave }: { children: React.ReactNode, on
         if (!description.trim() || !amount.trim()) return;
         const amountInCents = Math.round(parseFloat(amount) * 100);
         if (isNaN(amountInCents)) return;
-        const newTransaction: Transaction = { id: `txn-${Date.now()}`, date: formatISO(new Date(date)), description, category, type, amount: Math.abs(amountInCents) };
-        onSave(newTransaction);
+        onSave({ date, description, category, type, amountCents: Math.abs(amountInCents) });
         setDescription(''); setAmount(''); setDate(format(new Date(), 'yyyy-MM-dd')); setCategory('Food'); setType('expense'); setIsOpen(false);
     };
-    
+
     return (
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>{children}</DialogTrigger>

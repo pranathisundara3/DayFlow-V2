@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -13,8 +13,14 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api-client';
+
+// Strips server-generated fields so a backed-up item can be POSTed back as a
+// fresh create without the DTO rejecting unknown properties.
+function stripServerFields<T extends Record<string, any>>(item: T): Record<string, any> {
+    const { _id, userId, createdAt, updatedAt, __v, ...rest } = item;
+    return rest;
+}
 
 function BackupAndRestore() {
     const { user } = useAuth();
@@ -26,23 +32,20 @@ function BackupAndRestore() {
             return;
         }
         try {
-            const dataCollections = ['budget', 'habits', 'notes', 'notifications', 'passwords', 'todos', 'transactions', 'weeklySchedule', 'ai_chats', 'settings', 'gym_protein_intakes', 'gym_logged_foods', 'gym_protein_target', 'gym_custom_foods', 'gym_workout_split', 'gym_cycle_config'];
-            const backupData: Record<string, any> = {};
-            
-            for (const coll of dataCollections) {
-                const docRef = doc(db, 'users', user.uid, 'data', coll);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    backupData[coll] = docSnap.data();
-                }
-            }
-            
-            const userDocRef = doc(db, 'users', user.uid);
-            const userDocSnap = await getDoc(userDocRef);
-            if(userDocSnap.exists()) {
-                backupData['userProfile'] = userDocSnap.data();
-            }
+            const [userProfile, tasks, transactions, budget, habits, gym, notes, credentials, notifications, planner] = await Promise.all([
+                apiFetch<any>('/users/me'),
+                apiFetch<any[]>('/tasks'),
+                apiFetch<any[]>('/expenses/transactions'),
+                apiFetch<any>('/expenses/budget'),
+                apiFetch<any[]>('/habits'),
+                apiFetch<any>('/habits/gym'),
+                apiFetch<any[]>('/notes'),
+                apiFetch<any[]>('/credentials'),
+                apiFetch<any[]>('/notifications'),
+                apiFetch<any>('/planner'),
+            ]);
 
+            const backupData = { userProfile, tasks, transactions, budget, habits, gym, notes, credentials, notifications, planner };
             const json = JSON.stringify(backupData, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -72,13 +75,40 @@ function BackupAndRestore() {
                 const json = e.target?.result as string;
                 const backupData = JSON.parse(json);
 
-                for (const [coll, data] of Object.entries(backupData)) {
-                    if (coll === 'userProfile') {
-                         await setDoc(doc(db, 'users', user.uid), data as any, { merge: true });
-                    } else {
-                         await setDoc(doc(db, 'users', user.uid, 'data', coll), data as any);
-                    }
+                const restoreOps: Promise<any>[] = [];
+                if (backupData.userProfile) {
+                    const { username, theme, phoneNumber } = backupData.userProfile;
+                    restoreOps.push(apiFetch('/users/me', { method: 'PATCH', body: JSON.stringify({ username, theme, phoneNumber }) }));
                 }
+                if (Array.isArray(backupData.tasks)) {
+                    restoreOps.push(...backupData.tasks.map((t: any) => apiFetch('/tasks', { method: 'POST', body: JSON.stringify(stripServerFields(t)) })));
+                }
+                if (Array.isArray(backupData.transactions)) {
+                    restoreOps.push(...backupData.transactions.map((t: any) => apiFetch('/expenses/transactions', { method: 'POST', body: JSON.stringify({ ...stripServerFields(t), date: (t.date as string).slice(0, 10) }) })));
+                }
+                if (backupData.budget) {
+                    restoreOps.push(apiFetch('/expenses/budget', { method: 'PATCH', body: JSON.stringify({ amountCents: backupData.budget.amountCents }) }));
+                }
+                if (Array.isArray(backupData.habits) && backupData.habits.length > 0) {
+                    restoreOps.push(apiFetch('/habits', { method: 'PATCH', body: JSON.stringify(backupData.habits.map(stripServerFields)) }));
+                }
+                if (backupData.gym) {
+                    restoreOps.push(apiFetch('/habits/gym', { method: 'PATCH', body: JSON.stringify({ data: backupData.gym.data || {} }) }));
+                }
+                if (Array.isArray(backupData.notes)) {
+                    restoreOps.push(...backupData.notes.map((n: any) => apiFetch('/notes', { method: 'POST', body: JSON.stringify(stripServerFields(n)) })));
+                }
+                if (Array.isArray(backupData.credentials)) {
+                    restoreOps.push(...backupData.credentials.map((c: any) => apiFetch('/credentials', { method: 'POST', body: JSON.stringify(stripServerFields(c)) })));
+                }
+                if (Array.isArray(backupData.notifications)) {
+                    restoreOps.push(...backupData.notifications.map((n: any) => apiFetch('/notifications', { method: 'POST', body: JSON.stringify({ ...stripServerFields(n), date: (n.date as string).slice(0, 10) }) })));
+                }
+                if (backupData.planner) {
+                    restoreOps.push(apiFetch('/planner', { method: 'PUT', body: JSON.stringify({ days: backupData.planner.days || {} }) }));
+                }
+
+                await Promise.all(restoreOps);
                 toast({ title: 'Success', description: 'Your data has been restored. The page will now reload.' });
                 setTimeout(() => window.location.reload(), 2000);
             } catch (error) {
@@ -164,10 +194,8 @@ function PushNotificationManager() {
                 userVisibleOnly: true,
                 applicationServerKey,
             });
-            const token = await user.getIdToken();
-            await fetch('/api/push/subscribe', {
+            await apiFetch('/push/subscriptions', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(subscription),
             });
             setIsSubscribed(true);
@@ -196,12 +224,11 @@ function PushNotificationManager() {
             const registration = await navigator.serviceWorker.ready;
             const subscription = await registration.pushManager.getSubscription();
             if (subscription) {
+                const endpoint = subscription.endpoint;
                 await subscription.unsubscribe();
-                const token = await user.getIdToken();
-                await fetch('/api/push/unsubscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ endpoint: subscription.endpoint }),
+                await apiFetch('/push/subscriptions', {
+                    method: 'DELETE',
+                    body: JSON.stringify({ endpoint }),
                 });
             }
             setIsSubscribed(false);
@@ -239,12 +266,7 @@ function PushNotificationManager() {
         if (!user) return;
         toast({ title: 'Sending...', description: 'Sending a test notification to your device.' });
         try {
-            const token = await user.getIdToken();
-            const res = await fetch('/api/push/send-test', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if(!res.ok) throw new Error("Failed to send test notification");
+            await apiFetch('/push/test', { method: 'POST' });
             toast({ title: 'Test Sent!', description: 'Check your device for a notification.' });
         } catch(e) {
              toast({ variant: 'destructive', title: 'Failed to Send', description: 'Could not send test notification.' });
@@ -296,8 +318,13 @@ function PushNotificationManager() {
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [settings, setSettings] = useState({ gymTracking: true, theme: 'default-green' });
   const [isLoading, setIsLoading] = useState(true);
+  // Holds the full gym-settings blob (workout plan, nutrition logs, etc. — owned
+  // by habits/page.tsx) so toggling gymTracking here never clobbers the rest of
+  // it: `PATCH /habits/gym` replaces the whole blob on every call.
+  const gymDataRef = useRef<Record<string, unknown>>({});
 
   useEffect(() => {
     if (!user) {
@@ -305,31 +332,51 @@ export default function SettingsPage() {
         return;
     };
     setIsLoading(true);
-    const settingsDocRef = doc(db, 'users', user.uid, 'data', 'settings');
-    const unsubscribe = onSnapshot(settingsDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            const settingsData = (docSnap.data() as {items: any}).items;
-            setSettings({
-                gymTracking: settingsData.gymTracking !== false,
-                theme: settingsData.theme || 'default-green',
-            });
-        } else {
-            // If settings don't exist, create them
-            const defaultSettings = { gymTracking: true, theme: 'default-green' };
-            setDoc(settingsDocRef, { items: defaultSettings });
-            setSettings(defaultSettings);
-        }
-        setIsLoading(false);
+    let cancelled = false;
+    Promise.all([
+        apiFetch<{ theme?: string }>('/users/me'),
+        apiFetch<{ data: Record<string, unknown> }>('/habits/gym'),
+    ]).then(([userDoc, gymDoc]) => {
+        if (cancelled) return;
+        gymDataRef.current = gymDoc.data || {};
+        const gymSettings = gymDataRef.current.settings as { gymTracking?: boolean } | undefined;
+        setSettings({
+            theme: userDoc.theme || 'default-green',
+            gymTracking: gymSettings?.gymTracking !== false,
+        });
+    }).catch((err) => {
+        console.error('Failed to load settings:', err);
+        toast({ variant: 'destructive', title: 'Error', description: 'Could not load your settings.' });
+    }).finally(() => {
+        if (!cancelled) setIsLoading(false);
     });
-    return () => unsubscribe();
-  }, [user]);
+    return () => { cancelled = true; };
+  }, [user, toast]);
 
-  const handleSettingChange = async (key: string, value: any) => {
+  const handleThemeChange = async (value: string) => {
     if (!user) return;
-    const newSettings = { ...settings, [key]: value };
-    setSettings(newSettings);
-    const settingsDocRef = doc(db, 'users', user.uid, 'data', 'settings');
-    await setDoc(settingsDocRef, { items: newSettings });
+    const previous = settings.theme;
+    setSettings((prev) => ({ ...prev, theme: value }));
+    try {
+        await apiFetch('/users/me', { method: 'PATCH', body: JSON.stringify({ theme: value }) });
+    } catch (err) {
+        setSettings((prev) => ({ ...prev, theme: previous }));
+        toast({ variant: 'destructive', title: 'Error', description: 'Could not save theme.' });
+    }
+  };
+
+  const handleGymTrackingChange = async (checked: boolean) => {
+    if (!user) return;
+    const previous = settings.gymTracking;
+    setSettings((prev) => ({ ...prev, gymTracking: checked }));
+    const currentGymSettings = (gymDataRef.current.settings as { gymTracking?: boolean } | undefined) || {};
+    gymDataRef.current = { ...gymDataRef.current, settings: { ...currentGymSettings, gymTracking: checked } };
+    try {
+        await apiFetch('/habits/gym', { method: 'PATCH', body: JSON.stringify({ data: gymDataRef.current }) });
+    } catch (err) {
+        setSettings((prev) => ({ ...prev, gymTracking: previous }));
+        toast({ variant: 'destructive', title: 'Error', description: 'Could not save gym tracking setting.' });
+    }
   };
 
   return (
@@ -349,7 +396,7 @@ export default function SettingsPage() {
                                 <Label className="text-base flex items-center gap-2"><Palette className="h-5 w-5" />App Theme</Label>
                                 <p className="text-sm text-muted-foreground">Select a visual theme for the application.</p>
                             </div>
-                            <Select value={settings.theme} onValueChange={(value) => handleSettingChange('theme', value)}>
+                            <Select value={settings.theme} onValueChange={handleThemeChange}>
                                 <SelectTrigger className="w-[180px]">
                                     <SelectValue placeholder="Select theme" />
                                 </SelectTrigger>
@@ -373,7 +420,7 @@ export default function SettingsPage() {
                                 <Label htmlFor="gym-tracking-switch" className="text-base flex items-center gap-2"><Dumbbell className="h-5 w-5" />Gym &amp; Fitness Tracking</Label>
                                 <p className="text-sm text-muted-foreground">Show trackers for workouts, protein, and overload.</p>
                             </div>
-                            <Switch id="gym-tracking-switch" checked={settings.gymTracking} onCheckedChange={(checked) => handleSettingChange('gymTracking', checked)} />
+                            <Switch id="gym-tracking-switch" checked={settings.gymTracking} onCheckedChange={handleGymTrackingChange} />
                         </div>
                     )}
                 </CardContent>

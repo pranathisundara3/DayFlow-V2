@@ -13,13 +13,21 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
-import { db, storage, auth } from '@/lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { reauthenticateWithCredential, EmailAuthProvider, updateEmail, updatePassword } from 'firebase/auth';
+import { apiFetch, ApiError } from '@/lib/api-client';
+
+const MAX_AVATAR_BYTES = 1024 * 1024; // 1MB, matches the UI copy below
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const { toast } = useToast();
   
   // Profile state
@@ -40,25 +48,26 @@ export default function ProfilePage() {
   useEffect(() => {
     if (!user) return;
     setIsLoading(true);
-    const userDocRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setUsername(data.username || '');
-        setPhotoURL(data.photoURL || null);
-      }
-      setIsLoading(false);
+    let cancelled = false;
+    apiFetch<{ username: string; photoUrl: string | null }>('/users/me').then((data) => {
+      if (cancelled) return;
+      setUsername(data.username || '');
+      setPhotoURL(data.photoUrl || null);
+    }).catch((error) => {
+      console.error('Failed to load profile:', error);
+    }).finally(() => {
+      if (!cancelled) setIsLoading(false);
     });
-    return () => unsubscribe();
+    return () => { cancelled = true; };
   }, [user]);
 
   const handleSaveUsername = async () => {
     if (!user || !username.trim()) return;
     setIsLoading(true);
-    const userDocRef = doc(db, 'users', user.uid);
     const finalUsername = username.trim();
     try {
-        await setDoc(userDocRef, { username: finalUsername }, { merge: true });
+        await apiFetch('/users/me', { method: 'PATCH', body: JSON.stringify({ username: finalUsername }) });
+        await refreshUser();
         toast({ title: "Success", description: `Your username has been updated to ${finalUsername}.` });
     } catch(e) {
         toast({ variant: 'destructive', title: "Error", description: "Could not save your username." });
@@ -66,29 +75,34 @@ export default function ProfilePage() {
         setIsLoading(false);
     }
   };
-  
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || !user) return;
     const file = e.target.files[0];
     if (!file) return;
 
+    if (file.size > MAX_AVATAR_BYTES) {
+      toast({ variant: 'destructive', title: 'Image too large', description: 'Please choose an image under 1MB.' });
+      e.target.value = '';
+      return;
+    }
+
     setIsUploading(true);
-    const storageRef = ref(storage, `profile-pictures/${user.uid}`);
-    
     try {
-        await uploadBytes(storageRef, file);
-        const newPhotoURL = await getDownloadURL(storageRef);
-        
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, { photoURL: newPhotoURL }, { merge: true });
-        
-        setPhotoURL(newPhotoURL);
+        // Stored directly on the user document as a data: URI — no separate
+        // file/object storage in this backend.
+        const dataUrl = await readFileAsDataUrl(file);
+        await apiFetch('/users/me', { method: 'PATCH', body: JSON.stringify({ photoUrl: dataUrl }) });
+        await refreshUser();
+
+        setPhotoURL(dataUrl);
         toast({ title: 'Success!', description: 'Your profile picture has been updated.' });
     } catch (error) {
         console.error("Error uploading image:", error);
         toast({ variant: 'destructive', title: 'Upload Failed', description: 'Could not upload your image. Please try again.' });
     } finally {
         setIsUploading(false);
+        e.target.value = '';
     }
   };
 
@@ -104,21 +118,20 @@ export default function ProfilePage() {
     }
     setIsSecurityLoading(true);
     try {
-      const credential = EmailAuthProvider.credential(user.email, currentPassword);
-      await reauthenticateWithCredential(user, credential);
-      await updateEmail(user, newEmail);
-      await setDoc(doc(db, 'users', user.uid), { email: newEmail }, { merge: true });
+      await apiFetch('/auth/change-email', {
+        method: 'PATCH',
+        body: JSON.stringify({ currentPassword, newEmail }),
+      });
+      await refreshUser();
       toast({ title: 'Email updated!', description: `Your email address has been successfully changed to ${newEmail}.` });
       setNewEmail('');
       setCurrentPassword('');
-    } catch (error: any) {
+    } catch (error) {
       let description = "An error occurred while updating your email.";
-      if (error.code === 'auth/invalid-credential') {
+      if (error instanceof ApiError && error.status === 401) {
         description = 'Incorrect password. Please verify your current password and try again.';
-      } else if (error.code === 'auth/email-already-in-use') {
+      } else if (error instanceof ApiError && error.status === 409) {
         description = 'The new email address is already in use by another account.';
-      } else if (error.code === 'auth/requires-recent-login') {
-        description = 'This is a sensitive operation. Please log out and sign back in to continue.';
       }
       toast({ variant: 'destructive', title: 'Email Change Failed', description });
     } finally {
@@ -146,19 +159,18 @@ export default function ProfilePage() {
     }
     setIsSecurityLoading(true);
     try {
-      const credential = EmailAuthProvider.credential(user.email, currentPassword);
-      await reauthenticateWithCredential(user, credential);
-      await updatePassword(user, newPassword);
+      await apiFetch('/auth/change-password', {
+        method: 'PATCH',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
       toast({ title: 'Password updated!', description: 'Your password has been successfully changed.' });
       setNewPassword('');
       setConfirmNewPassword('');
       setCurrentPassword('');
-    } catch (error: any) {
+    } catch (error) {
       let description = "An error occurred while updating your password.";
-       if (error.code === 'auth/invalid-credential') {
+      if (error instanceof ApiError && error.status === 401) {
         description = 'Incorrect password. Please verify your current password and try again.';
-      } else if (error.code === 'auth/requires-recent-login') {
-        description = 'This is a sensitive operation. Please log out and sign back in to continue.';
       }
       toast({ variant: 'destructive', title: 'Password Change Failed', description });
     } finally {

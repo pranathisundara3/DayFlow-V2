@@ -4,7 +4,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Trash2, Wallet, CalendarCheck, ListChecks, GlassWater, Settings } from 'lucide-react';
-import { P_TODO_ITEMS, P_HABITS, P_TRANSACTIONS } from '@/lib/placeholder-data';
+import { P_HABITS } from '@/lib/placeholder-data';
 import type { PlannerItem, TodoItem, Habit, Transaction } from '@/types';
 import { useState, useEffect } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -19,26 +19,72 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/hooks/use-auth';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { apiFetch } from '@/lib/api-client';
 
-// Helper function to get data from Firestore or set placeholder data if it doesn't exist
-async function getData<T>(userId: string, collection: string, placeholder: T): Promise<T> {
-  const docRef = doc(db, 'users', userId, 'data', collection);
-  const docSnap = await getDoc(docRef);
-  if (docSnap.exists()) {
-    return (docSnap.data() as { items: T }).items;
-  } else {
-    await setDoc(docRef, { items: placeholder });
-    return placeholder;
-  }
+// --- Backend data shapes (mirrors the mapper/replace-all conventions already
+// established in the migrated src/app/{habits,expenses,planner}/page.tsx) ---
+
+// Habit as returned by the backend (Mongo `_id` instead of a client-generated `id`).
+type ApiHabit = {
+  _id: string;
+  name: string;
+  icon: string;
+  target?: number;
+  completions: Record<string, boolean | number>;
+};
+
+const mapApiHabit = (h: ApiHabit): Habit => ({
+  id: h._id,
+  name: h.name,
+  icon: h.icon,
+  target: h.target,
+  completions: h.completions || {},
+});
+
+// Strips the client-side `id` before sending to the backend: `PATCH /habits`
+// replaces the user's entire habit list on every call and its DTO doesn't
+// accept an `id`/`_id` field.
+const stripHabitForApi = (h: Habit) => ({
+  name: h.name,
+  icon: h.icon,
+  ...(h.target !== undefined ? { target: h.target } : {}),
+  completions: h.completions,
+});
+
+interface ApiTransaction {
+  _id: string;
+  date: string;
+  description: string;
+  category: string;
+  amountCents: number;
+  type: 'income' | 'expense';
+}
+interface ApiBudget {
+  _id: string;
+  amountCents: number;
 }
 
-// Helper function to save data to Firestore
-async function saveData<T>(userId: string, collection: string, data: T) {
-  const docRef = doc(db, 'users', userId, 'data', collection);
-  await setDoc(docRef, { items: data });
+// Amounts are stored server-side as integer cents; Transaction.amount is also
+// a plain cent count, so the two line up without extra scaling.
+function apiToTransaction(t: ApiTransaction): Transaction {
+  return { id: t._id, date: t.date, description: t.description, category: t.category, amount: t.amountCents, type: t.type };
 }
+
+// Task as returned by the backend (`GET/POST/PATCH/DELETE /api/tasks` — normal
+// per-item CRUD, unlike habits/planner which replace the whole document).
+type ApiTask = {
+  _id: string;
+  text: string;
+  completed: boolean;
+  priority?: 'high' | 'medium' | 'low';
+};
+
+const mapApiTask = (t: ApiTask): TodoItem => ({
+  id: t._id,
+  text: t.text,
+  completed: t.completed,
+  priority: t.priority,
+});
 
 function WaterIntakeWidget({ now }: { now: Date }) {
   const { user } = useAuth();
@@ -54,22 +100,41 @@ function WaterIntakeWidget({ now }: { now: Date }) {
 
   useEffect(() => {
     if (!user) return;
-    const habitsDocRef = doc(db, 'users', user.uid, 'data', 'habits');
-    const unsubscribe = onSnapshot(habitsDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            setHabits((docSnap.data() as {items: Habit[]}).items || []);
+    let cancelled = false;
+    apiFetch<ApiHabit[]>('/habits').then(async (docs) => {
+        if (cancelled) return;
+        if (docs.length === 0) {
+            // Mirrors the seeding behavior already established in habits/page.tsx:
+            // the Gym Tracker depends on the default (water/protein/pill/dumbbell)
+            // habits existing, so a brand-new user's empty list is seeded once.
+            const seeded = await apiFetch<ApiHabit[]>('/habits', {
+                method: 'PATCH',
+                body: JSON.stringify(P_HABITS.map(stripHabitForApi)),
+            });
+            if (!cancelled) setHabits(seeded.map(mapApiHabit));
         } else {
-            // If no data, set from placeholder and save it
-            getData(user.uid, 'habits', P_HABITS).then(setHabits);
+            setHabits(docs.map(mapApiHabit));
         }
+    }).catch((err) => {
+        console.error('Failed to load habits:', err);
     });
-    return () => unsubscribe();
+    return () => { cancelled = true; };
   }, [user]);
 
-  const handleHabitsUpdate = (updatedHabits: Habit[]) => {
+  const handleHabitsUpdate = async (updatedHabits: Habit[]) => {
       if (!user) return;
+      const previous = habits;
       setHabits(updatedHabits);
-      saveData(user.uid, 'habits', updatedHabits);
+      try {
+          const saved = await apiFetch<ApiHabit[]>('/habits', {
+              method: 'PATCH',
+              body: JSON.stringify(updatedHabits.map(stripHabitForApi)),
+          });
+          setHabits(saved.map(mapApiHabit));
+      } catch (err) {
+          setHabits(previous);
+          console.error('Failed to save habits:', err);
+      }
   }
 
   const ML_PER_GLASS = 250;
@@ -147,13 +212,15 @@ function TodaysPlan({ now }: { now: Date }) {
   
   useEffect(() => {
     if (!user) return;
-    const scheduleDocRef = doc(db, 'users', user.uid, 'data', 'weeklySchedule');
-    const unsubscribe = onSnapshot(scheduleDocRef, (docSnap) => {
-      const schedule = docSnap.exists() ? (docSnap.data() as {items: Record<string, PlannerItem[]>}).items : {};
+    let cancelled = false;
+    apiFetch<{ days: Record<string, PlannerItem[]> }>('/planner').then((data) => {
+      if (cancelled) return;
       const dayName = format(now, 'EEEE');
-      setRoutineItems(schedule[dayName] || []);
+      setRoutineItems((data.days || {})[dayName] || []);
+    }).catch((err) => {
+      console.error('Failed to load schedule:', err);
     });
-    return () => unsubscribe();
+    return () => { cancelled = true; };
   }, [user, now]);
 
   useEffect(() => {
@@ -236,15 +303,18 @@ function FinancialSnapshot({ now }: { now: Date }) {
 
   useEffect(() => {
     if (!user) return;
-    const unsubTransactions = onSnapshot(doc(db, 'users', user.uid, 'data', 'transactions'), (docSnap) => {
-        if (docSnap.exists()) setTransactions((docSnap.data() as {items: Transaction[]}).items || []);
-        else getData(user.uid, 'transactions', P_TRANSACTIONS).then(setTransactions);
+    let cancelled = false;
+    Promise.all([
+        apiFetch<ApiTransaction[]>('/expenses/transactions'),
+        apiFetch<ApiBudget>('/expenses/budget'),
+    ]).then(([txnDocs, budgetDoc]) => {
+        if (cancelled) return;
+        setTransactions(txnDocs.map(apiToTransaction));
+        setMonthlyBudget(budgetDoc.amountCents);
+    }).catch((err) => {
+        console.error('Failed to load financial snapshot:', err);
     });
-    const unsubBudget = onSnapshot(doc(db, 'users', user.uid, 'data', 'budget'), (docSnap) => {
-        if (docSnap.exists()) setMonthlyBudget((docSnap.data() as {items: number}).items || 5000000);
-        else getData(user.uid, 'budget', 5000000).then(setMonthlyBudget);
-    });
-    return () => { unsubTransactions(); unsubBudget(); };
+    return () => { cancelled = true; };
   }, [user]);
 
   const todaysExpenses = transactions.filter(t => t.type === 'expense' && isSameDay(parseISO(t.date), now)).reduce((sum, t) => sum + t.amount, 0);
@@ -279,28 +349,58 @@ function TodoList() {
 
     useEffect(() => {
         if (!user) return;
-        const todoDocRef = doc(db, 'users', user.uid, 'data', 'todos');
-        const unsubscribe = onSnapshot(todoDocRef, (docSnap) => {
-            if (docSnap.exists()) setTodos((docSnap.data() as {items: TodoItem[]}).items || []);
-            else getData(user.uid, 'todos', P_TODO_ITEMS).then(setTodos);
+        let cancelled = false;
+        apiFetch<ApiTask[]>('/tasks').then((docs) => {
+            if (!cancelled) setTodos(docs.map(mapApiTask));
+        }).catch((err) => {
+            console.error('Failed to load tasks:', err);
         });
-        return () => unsubscribe();
+        return () => { cancelled = true; };
     }, [user]);
 
-    const handleTodosUpdate = (updatedTodos: TodoItem[]) => {
+    // Unlike habits/planner, /api/tasks is normal per-item CRUD (no replace-all),
+    // and its PATCH DTO requires the full `text` field on every update.
+    const toggleTodo = async (id: string) => {
         if (!user) return;
-        setTodos(updatedTodos);
-        saveData(user.uid, 'todos', updatedTodos);
+        const target = todos.find(todo => todo.id === id);
+        if (!target) return;
+        const previous = todos;
+        setTodos(todos.map(todo => todo.id === id ? { ...todo, completed: !todo.completed } : todo));
+        try {
+            await apiFetch(`/tasks/${id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ text: target.text, completed: !target.completed, priority: target.priority }),
+            });
+        } catch (err) {
+            setTodos(previous);
+            console.error('Failed to update task:', err);
+        }
     };
 
-    const toggleTodo = (id: string) => handleTodosUpdate(todos.map(todo => todo.id === id ? { ...todo, completed: !todo.completed } : todo));
-    const deleteTodo = (id: string) => handleTodosUpdate(todos.filter(todo => todo.id !== id));
-    
-    const addTodo = () => {
-        if (newTodoText.trim() === '') return;
-        const newTodo: TodoItem = { id: `todo-${Date.now()}`, text: newTodoText.trim(), completed: false, priority: newTodoPriority };
-        handleTodosUpdate([newTodo, ...todos]);
-        setNewTodoText(''); setNewTodoPriority('low'); setIsAddTodoDialogOpen(false);
+    const deleteTodo = async (id: string) => {
+        if (!user) return;
+        const previous = todos;
+        setTodos(todos.filter(todo => todo.id !== id));
+        try {
+            await apiFetch(`/tasks/${id}`, { method: 'DELETE' });
+        } catch (err) {
+            setTodos(previous);
+            console.error('Failed to delete task:', err);
+        }
+    };
+
+    const addTodo = async () => {
+        if (!user || newTodoText.trim() === '') return;
+        try {
+            const created = await apiFetch<ApiTask>('/tasks', {
+                method: 'POST',
+                body: JSON.stringify({ text: newTodoText.trim(), completed: false, priority: newTodoPriority }),
+            });
+            setTodos([mapApiTask(created), ...todos]);
+            setNewTodoText(''); setNewTodoPriority('low'); setIsAddTodoDialogOpen(false);
+        } catch (err) {
+            console.error('Failed to add task:', err);
+        }
     };
 
     const getPriorityBadgeVariant = (priority?: 'high' | 'medium' | 'low') => {
@@ -356,14 +456,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!user) return;
-    const userDocRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
-        if (docSnap.exists()) setUsername(docSnap.data().username);
-    });
-
-    const timer = setInterval(() => setNow(new Date()), 60000);
-    return () => { unsubscribe(); clearInterval(timer); };
+    // `user.displayName` is already populated by useAuth() (from the backend's
+    // `/users/me`, "Guest User" for a guest session) — no separate fetch needed here.
+    setUsername(user.isAnonymous ? 'Guest User' : user.displayName);
   }, [user]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const hour = now.getHours();
